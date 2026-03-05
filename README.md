@@ -4,7 +4,7 @@ A feature-rich whiteboard application with drag-and-drop functionality, similar 
 
 ## Features
 
-- **Drawing Tools**: Freehand pen, line, shapes (rectangle, circle, triangle), arrow, and text
+- **Drawing Tools**: Freehand pen, line, shapes, arrow, and text
 - **Drag & Drop**: Move, resize, and rotate any object on the canvas
 - **Color Picker**: Choose from preset colors or use custom colors
 - **Stroke Width**: Adjustable stroke width for all drawing tools
