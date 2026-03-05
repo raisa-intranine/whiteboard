@@ -77,18 +77,10 @@ const Toolbar = ({
   }, [])
 
   const handleDelete = () => {
-  if (!canvas) return
-  const objs = canvas.getActiveObjects()
-  if (objs.length) {
-    objs.forEach(o => {
-      if (o.stickyText) canvas.remove(o.stickyText)
-      if (o.stickyRect) canvas.remove(o.stickyRect)
-      canvas.remove(o)
-    })
-    canvas.discardActiveObject()
-    canvas.renderAll()
+    if (window.__wbDelete) {
+      window.__wbDelete()
+    }
   }
-}
 
   const updateZoom = (z) => {
     if (!canvas) return

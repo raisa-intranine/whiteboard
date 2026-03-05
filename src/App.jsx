@@ -31,10 +31,9 @@ function App() {
 
   const handleConfirmClear = () => {
     setConfirmVisible(false)
-    if (canvasRef) {
-      canvasRef.clear()
-      canvasRef.backgroundColor = canvasBackground
-      canvasRef.renderAll()
+    // FIX: Use our custom clear function so it can be undone and keeps the background!
+    if (window.__wbClear) {
+      window.__wbClear()
     }
   }
 
@@ -60,7 +59,7 @@ function App() {
         setFillShape={setFillShape}
         canUndo={canUndo}
         canRedo={canRedo}
-        onClearRequest={handleClearRequest}
+        onClearRequest={handleClearRequest} // Pass the request function back to the Toolbar
       />
       <div className="main-content">
         {showSidebar && (
