@@ -69,6 +69,7 @@ function App() {
             canvasBackground={canvasBackground}
             setCanvasBackground={setCanvasBackground}
             canvas={canvasRef}
+            isOpen={showSidebar}
           />
         )}
         <Whiteboard

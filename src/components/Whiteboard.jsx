@@ -138,6 +138,24 @@ const Whiteboard = ({
     canvas.renderAll()
   }, [])
 
+  const deleteSelected = useCallback(() => {
+    const canvas = fabricRef.current
+    if (!canvas) return
+    const objs = canvas.getActiveObjects()
+    if (objs.length) {
+      isMutingRef.current = true
+      objs.forEach(o => {
+        if (o.stickyText) canvas.remove(o.stickyText)
+        if (o.stickyRect) canvas.remove(o.stickyRect)
+        canvas.remove(o)
+      })
+      isMutingRef.current = false
+      canvas.discardActiveObject()
+      canvas.fire('object:modified')
+      canvas.renderAll()
+    }
+  }, [])
+
   const addImage = useCallback((dataUrl) => {
     const canvas = fabricRef.current
     if (!canvas) return
@@ -165,13 +183,15 @@ const Whiteboard = ({
     window.__wbRedo     = redo
     window.__wbClear    = clearCanvas
     window.__wbAddImage = addImage
+    window.__wbDelete   = deleteSelected
     return () => {
       delete window.__wbUndo
       delete window.__wbRedo
       delete window.__wbClear
       delete window.__wbAddImage
+      delete window.__wbDelete
     }
-  }, [undo, redo, clearCanvas, addImage])
+  }, [undo, redo, clearCanvas, addImage, deleteSelected])
 
   useEffect(() => {
     const container = containerRef.current
@@ -544,19 +564,7 @@ const Whiteboard = ({
 
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
-        const objs = c.getActiveObjects()
-        if (objs.length) {
-          isMutingRef.current = true
-          objs.forEach(o => {
-            if (o.stickyText) c.remove(o.stickyText)
-            if (o.stickyRect) c.remove(o.stickyRect)
-            c.remove(o)
-          })
-          isMutingRef.current = false
-          c.discardActiveObject()
-          c.fire('object:modified')
-          c.renderAll()
-        }
+        deleteSelected()
       }
 
       if (e.ctrlKey || e.metaKey) {
@@ -584,7 +592,7 @@ const Whiteboard = ({
 
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [undo, redo])
+  }, [undo, redo, deleteSelected])
 
   return (
     <div ref={containerRef} className={`whiteboard-container ${tool ? `tool-${tool}` : ''}`}>
