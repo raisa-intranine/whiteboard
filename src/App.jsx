@@ -2,7 +2,7 @@ import { useState } from 'react'
 import Whiteboard from './components/Whiteboard'
 import Toolbar from './components/Toolbar'
 import Sidebar from './components/Sidebar'
-import ConfirmDialog from './components/ConfirmDialog'
+import ConfirmDialog from './components/Confirmdialog'
 import './App.css'
 
 function App() {
