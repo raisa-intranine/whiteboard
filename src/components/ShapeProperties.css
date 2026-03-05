@@ -219,3 +219,33 @@
   color: var(--sp-text-muted); min-width: 28px;
   text-align: right; font-variant-numeric: tabular-nums;
 }
+
+/* Responsive styles */
+@media (max-width: 768px) {
+  .shape-properties {
+    right: 8px;
+    bottom: 8px;
+    max-width: calc(100vw - 16px);
+  }
+  
+  .shape-properties__section {
+    padding: 10px 12px;
+  }
+  
+  .shape-properties__label {
+    font-size: 10px;
+  }
+  
+  .shape-properties__slider {
+    height: 32px;
+  }
+}
+
+@media (max-width: 480px) {
+  .shape-properties {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    max-width: none;
+  }
+}

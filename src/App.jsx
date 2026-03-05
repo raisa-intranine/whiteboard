@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import AuthGate from './components/AuthGate'
 import Whiteboard from './components/Whiteboard'
 import Toolbar from './components/Toolbar'
 import Sidebar from './components/Sidebar'
@@ -31,7 +32,6 @@ function App() {
 
   const handleConfirmClear = () => {
     setConfirmVisible(false)
-    // FIX: Use our custom clear function so it can be undone and keeps the background!
     if (window.__wbClear) {
       window.__wbClear()
     }
@@ -42,59 +42,67 @@ function App() {
   }
 
   return (
-    <div className={`app ${theme}`}>
-      <Toolbar
-        tool={tool}
-        setTool={setTool}
-        color={color}
-        setColor={setColor}
-        strokeWidth={strokeWidth}
-        setStrokeWidth={setStrokeWidth}
-        canvas={canvasRef}
-        theme={theme}
-        setTheme={setTheme}
-        setShowSidebar={setShowSidebar}
-        showSidebar={showSidebar}
-        fillShape={fillShape}
-        setFillShape={setFillShape}
-        canUndo={canUndo}
-        canRedo={canRedo}
-        onClearRequest={handleClearRequest} // Pass the request function back to the Toolbar
-      />
-      <div className="main-content">
-        {showSidebar && (
-          <Sidebar
-            theme={theme}
-            setTheme={setTheme}
-            canvasBackground={canvasBackground}
-            setCanvasBackground={setCanvasBackground}
-            canvas={canvasRef}
-            isOpen={showSidebar}
-          />
-        )}
-        <Whiteboard
+    <AuthGate>
+      <div className={`app ${theme}`}>
+        <Toolbar
           tool={tool}
           setTool={setTool}
           color={color}
+          setColor={setColor}
           strokeWidth={strokeWidth}
-          setCanvasRef={setCanvasRef}
-          canvasBackground={canvasBackground}
+          setStrokeWidth={setStrokeWidth}
+          canvas={canvasRef}
+          theme={theme}
+          setTheme={setTheme}
+          setShowSidebar={setShowSidebar}
+          showSidebar={showSidebar}
           fillShape={fillShape}
-          onHistoryChange={handleHistoryChange}
+          setFillShape={setFillShape}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          onClearRequest={handleClearRequest}
+        />
+        <div className="main-content">
+          {showSidebar && (
+            <>
+              <div 
+                className={`sidebar-backdrop ${showSidebar ? 'active' : ''}`}
+                onClick={() => setShowSidebar(false)}
+              />
+              <Sidebar
+                theme={theme}
+                setTheme={setTheme}
+                canvasBackground={canvasBackground}
+                setCanvasBackground={setCanvasBackground}
+                canvas={canvasRef}
+                isOpen={showSidebar}
+              />
+            </>
+          )}
+          <Whiteboard
+            tool={tool}
+            setTool={setTool}
+            color={color}
+            strokeWidth={strokeWidth}
+            setCanvasRef={setCanvasRef}
+            canvasBackground={canvasBackground}
+            fillShape={fillShape}
+            onHistoryChange={handleHistoryChange}
+          />
+        </div>
+
+        <ConfirmDialog
+          visible={confirmVisible}
+          title="Clear Canvas"
+          message="This will erase everything on the canvas."
+          confirmLabel="Clear Everything"
+          cancelLabel="Keep Working"
+          danger={true}
+          onConfirm={handleConfirmClear}
+          onCancel={handleCancelClear}
         />
       </div>
-
-      <ConfirmDialog
-        visible={confirmVisible}
-        title="Clear Canvas"
-        message="This will permanently erase everything on the canvas. This action cannot be undone."
-        confirmLabel="Clear Everything"
-        cancelLabel="Keep Working"
-        danger={true}
-        onConfirm={handleConfirmClear}
-        onCancel={handleCancelClear}
-      />
-    </div>
+    </AuthGate>
   )
 }
 
