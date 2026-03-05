@@ -519,7 +519,13 @@ const Whiteboard = ({
       isDrawingRef.current    = false
       currentShapeRef.current = null
       startPointRef.current   = null
-      if (wasDrawing) canvas.fire('object:modified')
+      if (wasDrawing) {
+        canvas.fire('object:modified')
+        // Auto-switch to select mode after drawing a shape
+        if (tool !== 'select' && tool !== 'pen' && tool !== 'laser') {
+          setTool('select')
+        }
+      }
     }
 
     canvas.on('mouse:down', onMouseDown)
