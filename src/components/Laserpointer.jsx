@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import './LaserPointer.css'
+import './Laserpointer.css'
 
 const LaserPointer = ({ active, containerRef }) => {
   const overlayRef   = useRef(null)   

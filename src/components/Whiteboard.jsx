@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { fabric } from 'fabric'
 import ShapeProperties from './ShapeProperties'
-import LaserPointer from './LaserPointer'
+import LaserPointer from './Laserpointer'
 import './Whiteboard.css'
 
 const SHAPE_TYPES = ['rect', 'circle', 'triangle', 'polygon', 'ellipse', 'group', 'i-text', 'textbox', 'image']
