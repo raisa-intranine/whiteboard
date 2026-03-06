@@ -16,33 +16,8 @@ const SERIALIZE_PROPS = [
   'isPlaceholder', 'placeholderText',
 ]
 
-// ── Container-drag helpers ───────────────────────────────────────────────────
-const CONTAINER_TYPES = new Set(['rect', 'circle', 'ellipse', 'triangle', 'polygon'])
-
-const isContainerShape = (obj) => {
-  if (!obj) return false
-  if (obj.isEraserStroke) return false
-  if (obj.stickyRect) return false
-  return CONTAINER_TYPES.has(obj.type) || !!obj.isFrame
-}
-
-const getObjCenter = (obj) => {
-  const br = obj.getBoundingRect(true, true)
-  return { x: br.left + br.width / 2, y: br.top + br.height / 2 }
-}
-
-const getContainedObjs = (container, canvas) => {
-  const br = container.getBoundingRect(true, true)
-  return canvas.getObjects().filter(obj => {
-    if (obj === container) return false
-    if (obj.isEraserStroke) return false
-    if (obj === container.stickyText) return false
-    const c = getObjCenter(obj)
-    return c.x >= br.left && c.x <= br.left + br.width &&
-      c.y >= br.top && c.y <= br.top + br.height
-  })
-}
-// ─────────────────────────────────────────────────────────────────────────────
+// Container-drag helpers removed intentionally.
+// Objects should only move together when explicitly grouped by the user.
 
 const serializeCanvas = (canvas) => {
   try {
@@ -113,6 +88,10 @@ const CTX_ICONS = {
   back: <><polyline points="17 6 12 11 7 6" /><polyline points="17 13 12 18 7 13" /></>,
   copy: <><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>,
   delete: <><path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" /></>,
+  // Group icon: two overlapping rectangles with a bracket
+  group: <><rect x="2" y="7" width="9" height="9" rx="1.5" /><rect x="13" y="7" width="9" height="9" rx="1.5" /><path d="M8 4h8" strokeDasharray="2 1" /></>,
+  // Ungroup icon: rectangles being separated
+  ungroup: <><rect x="2" y="3" width="8" height="8" rx="1.5" /><rect x="14" y="13" width="8" height="8" rx="1.5" /><line x1="10" y1="7" x2="14" y2="17" strokeDasharray="2 2" /></>,
 }
 
 const CtxMenu = ({ x, y, items, onClose }) => {
@@ -307,12 +286,33 @@ const applyLineControls = (line) => {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Detect whether a canvas background colour is dark ────────────────────────
+const isBgDark = (bg) => {
+  if (!bg) return false
+  const dark = ['#1e1e2e', '#18181b', '#111827', '#0f172a', '#1a1a2e', '#212121', '#1e1e1e']
+  if (dark.includes(bg.toLowerCase())) return true
+  const m = bg.match(/\d+/g)
+  if (m && m.length >= 3) {
+    const luminance = +m[0] * 0.299 + +m[1] * 0.587 + +m[2] * 0.114
+    return luminance < 128
+  }
+  if (/^#[0-9a-f]{6}$/i.test(bg)) {
+    const r = parseInt(bg.slice(1, 3), 16)
+    const g = parseInt(bg.slice(3, 5), 16)
+    const b = parseInt(bg.slice(5, 7), 16)
+    return r * 0.299 + g * 0.587 + b * 0.114 < 128
+  }
+  return false
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 const drawPlaceholder = (ctx, obj) => {
   const text = obj.placeholderText || 'Type here…'
   const family = (obj.fontFamily || 'DM Sans').replace(/'/g, '').replace(',sans-serif', '').trim()
   const size = obj.fontSize || 20
+  const dark = isBgDark(obj.canvas?.backgroundColor)
   ctx.save()
-  ctx.fillStyle = 'rgba(0,0,0,0.28)'
+  ctx.fillStyle = dark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.28)'
   ctx.font = `${size}px ${family}`
   ctx.textAlign = 'left'
   ctx.textBaseline = 'alphabetic'
@@ -336,11 +336,9 @@ const Whiteboard = ({
   const isDrawingRef = useRef(false)
   const startPointRef = useRef(null)
   const currentShapeRef = useRef(null)
-  // ── Pointer-event pan (works for mouse + touch + stylus on all devices) ───
-  const panActiveRef   = useRef(false)   // true while pointer is down in pan mode
-  const panLastPosRef  = useRef(null)    // {x,y} of last pointer position
-  const panPointerId   = useRef(null)    // locked pointer id
-  // ──────────────────────────────────────────────────────────────────────────
+  const panActiveRef   = useRef(false)
+  const panLastPosRef  = useRef(null)
+  const panPointerId   = useRef(null)
 
   const historyRef = useRef([])
   const historyIdxRef = useRef(-1)
@@ -488,7 +486,6 @@ const Whiteboard = ({
       hoverCursor: 'move',
       moveCursor: 'move',
       rotationCursor: 'crosshair',
-      // Disable fabric's built-in touch gestures so we can handle pan ourselves
       allowTouchScrolling: false,
     })
     fabric.Object.prototype.set({
@@ -502,7 +499,6 @@ const Whiteboard = ({
     fabricRef.current = canvas
     setCanvasRef(canvas)
 
-    // ── Placeholder render overrides ──────────────────────────────────────
     const origTextboxRender = fabric.Textbox.prototype._render
     const origITextRender   = fabric.IText.prototype._render
 
@@ -521,7 +517,6 @@ const Whiteboard = ({
         origITextRender.call(this, ctx)
       }
     }
-    // ──────────────────────────────────────────────────────────────────────
 
     deserializeCanvas(canvas, () => pushSnapshot())
 
@@ -533,45 +528,8 @@ const Whiteboard = ({
     canvas.on('object:modified', onMutation)
     canvas.on('object:removed', onMutation)
 
-    // ── Container-drag ─────────────────────────────────────────────────────
-    canvas.on('mouse:down', (opt) => {
-      const obj = opt.target
-      if (!obj || !isContainerShape(obj)) return
-      obj.__prevLeft = obj.left
-      obj.__prevTop = obj.top
-      obj.__dragChildren = getContainedObjs(obj, canvas)
-    })
-
-    canvas.on('object:moving', (opt) => {
-      const obj = opt.target
-      if (!isContainerShape(obj)) return
-      if (obj.__prevLeft === undefined) {
-        obj.__prevLeft = obj.left
-        obj.__prevTop = obj.top
-        obj.__dragChildren = getContainedObjs(obj, canvas)
-        return
-      }
-      const dx = obj.left - obj.__prevLeft
-      const dy = obj.top - obj.__prevTop
-      obj.__prevLeft = obj.left
-      obj.__prevTop = obj.top
-      const children = obj.__dragChildren
-      if (!children || (!dx && !dy)) return
-      children.forEach(child => {
-        child.set({ left: child.left + dx, top: child.top + dy })
-        child.setCoords()
-      })
-      canvas.renderAll()
-    })
-
-    canvas.on('mouse:up', () => {
-      canvas.getObjects().forEach(obj => {
-        delete obj.__prevLeft
-        delete obj.__prevTop
-        delete obj.__dragChildren
-      })
-    })
-    // ──────────────────────────────────────────────────────────────────────
+    // Container-drag intentionally removed.
+    // Objects only move together when the user explicitly groups them.
 
     canvas.on('path:created', (opt) => {
       if (toolRef.current === 'eraser')
@@ -616,9 +574,6 @@ const Whiteboard = ({
         setTextBarPosition(null)
         return
       }
-      // getBoundingRect(true,true) returns coords in canvas-element pixel space
-      // (already includes viewport pan/zoom). We offset by the canvas element's
-      // position on screen — NOT the container — so it stays accurate after panning.
       const canvasEl = canvas.upperCanvasEl || canvas.lowerCanvasEl
       const canvasRect = canvasEl
         ? canvasEl.getBoundingClientRect()
@@ -658,7 +613,6 @@ const Whiteboard = ({
       if (obj && (obj.type === 'i-text' || obj.type === 'textbox')) {
         updateTextBarPos(obj)
       }
-      // Keep bar above sticky note text when the sticky rect is dragged
       if (obj && obj.stickyText) {
         updateTextBarPos(obj.stickyText)
       }
@@ -674,19 +628,43 @@ const Whiteboard = ({
     const handleContextMenu = (e) => {
       e.preventDefault()
       e.stopPropagation()
+
       const target = canvas.findTarget(e, false)
-      if (!target) return
-      canvas.setActiveObject(target)
-      canvas.renderAll()
-      setContextMenu({ clientX: e.clientX, clientY: e.clientY, target })
+      if (!target) return  // right-click on empty canvas — no menu
+
+      // canvas.getActiveObject() returns the ActiveSelection when multiple objects
+      // are selected. canvas.getActiveObjects() returns the individual objects within it.
+      const activeObj = canvas.getActiveObject()
+      const activeObjs = canvas.getActiveObjects() // individual objects (unwraps ActiveSelection)
+
+      let finalSelected
+      // Check if the right-clicked target is the ActiveSelection itself OR one of its members
+      const isInsideMultiSelect =
+        activeObjs.length > 1 &&
+        (target === activeObj || activeObjs.includes(target))
+
+      if (isInsideMultiSelect) {
+        // Preserve the full multi-selection
+        finalSelected = [...activeObjs]
+      } else {
+        // Select only the right-clicked object
+        canvas.discardActiveObject()
+        canvas.setActiveObject(target)
+        canvas.renderAll()
+        finalSelected = [target]
+      }
+
+      setContextMenu({
+        clientX: e.clientX,
+        clientY: e.clientY,
+        target: finalSelected[0],
+        selectedObjects: finalSelected,
+      })
     }
     const ctxEl = upperCanvas || canvas.wrapperEl
     ctxEl?.addEventListener('contextmenu', handleContextMenu)
 
-    // ── Unified pointer-event pan (mouse + touch + stylus, all devices) ─────
-    // Attached to the container div so it intercepts all pointer types before
-    // Fabric sees them. Uses pointer capture so pointerup fires even if the
-    // pointer leaves the element (common on mobile DevTools emulation).
+    // ── Unified pointer-event pan ─────────────────────────────────────────
     const onPanPointerDown = (e) => {
       if (toolRef.current !== 'pan') return
       if (panActiveRef.current) return
@@ -747,10 +725,19 @@ const Whiteboard = ({
     }
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  const ctxItems = useCallback((target) => {
+  // ── Context menu items ────────────────────────────────────────────────────
+  // Group/Ungroup logic:
+  //   - "Group Selected" appears ONLY when the user has explicitly selected 2+ objects
+  //     (via drag-select or Shift+click). Spatial containment is NEVER considered.
+  //   - "Ungroup" appears ONLY when a single fabric.Group is right-clicked.
+  //   - Sticky notes (rect+text pairs) are excluded from grouping to preserve their
+  //     internal binding logic.
+  // ─────────────────────────────────────────────────────────────────────────
+  const ctxItems = useCallback((target, selectedObjects) => {
     const c = fabricRef.current
     if (!c || !target) return []
     const snap = () => { serializeCanvas(c); pushSnapshot() }
+
     const reorderAndSnap = (moveFn) => {
       moveFn()
       c.discardActiveObject()
@@ -762,7 +749,65 @@ const Whiteboard = ({
         snap()
       })
     }
-    return [
+
+    const items = []
+
+    // ── Group Selected — only for explicit multi-selections ────────────────
+    // Filter out sticky note components (they manage their own internal binding)
+    const groupableObjs = (selectedObjects || []).filter(
+      o => !o.stickyRect && !o.stickyText
+    )
+
+    if (groupableObjs.length >= 2) {
+      items.push({
+        label: 'Group Selected',
+        icon: 'group',
+        action: () => {
+          // Re-read the live selection at action time (avoids stale closure)
+          const liveObjs = c.getActiveObjects().filter(o => !o.stickyRect && !o.stickyText)
+          const toGroup = liveObjs.length >= 2 ? liveObjs : groupableObjs
+
+          c.discardActiveObject()
+          const sel = new fabric.ActiveSelection(toGroup, { canvas: c })
+          c.setActiveObject(sel)
+          const group = sel.toGroup()
+          group.set({ selectable: true, evented: true })
+          group.setCoords()
+          c.setActiveObject(group)
+          c.renderAll()
+          snap()
+        },
+      })
+    }
+
+    // ── Ungroup — only when a single Group is right-clicked ────────────────
+    if (target.type === 'group' && (selectedObjects || []).length === 1) {
+      items.push({
+        label: 'Ungroup',
+        icon: 'ungroup',
+        action: () => {
+          c.setActiveObject(target)
+          const activeGroup = c.getActiveObject()
+          if (!activeGroup || activeGroup.type !== 'group') return
+
+          // toActiveSelection() disperses the group back to individual objects
+          const ungrouped = activeGroup.toActiveSelection()
+          ungrouped.getObjects().forEach(o => {
+            o.set({ selectable: true, evented: true })
+            o.setCoords()
+          })
+          c.discardActiveObject()
+          c.renderAll()
+          snap()
+        },
+      })
+    }
+
+    // Add divider before z-order / duplicate / delete if we added group actions
+    if (items.length > 0) items.push({ divider: true })
+
+    // ── Standard items ─────────────────────────────────────────────────────
+    items.push(
       { label: 'Bring Forward', icon: 'forward', action: () => reorderAndSnap(() => c.bringForward(target)) },
       { label: 'Send Backward', icon: 'backward', action: () => reorderAndSnap(() => c.sendBackwards(target)) },
       { divider: true },
@@ -785,14 +830,22 @@ const Whiteboard = ({
       {
         label: 'Delete', icon: 'delete', danger: true,
         action: () => {
-          if (target.stickyText) c.remove(target.stickyText)
-          if (target.stickyRect) c.remove(target.stickyRect)
-          c.remove(target)
+          // Delete ALL explicitly selected objects, not just the right-clicked one
+          const toDelete = selectedObjects && selectedObjects.length > 1
+            ? selectedObjects
+            : [target]
+          toDelete.forEach(o => {
+            if (o.stickyText) c.remove(o.stickyText)
+            if (o.stickyRect) c.remove(o.stickyRect)
+            c.remove(o)
+          })
           c.discardActiveObject()
           snap()
         }
       },
-    ]
+    )
+
+    return items
   }, [pushSnapshot])
 
   useEffect(() => {
@@ -806,25 +859,16 @@ const Whiteboard = ({
     })
   }, [canvasBackground])
 
-  // ── FIXED: Tool-mode effect ────────────────────────────────────────────────
-  // Key fixes:
-  //   1. Always reset pan state (panActiveRef/panLastPosRef/panPointerId) on tool change
-  //   2. Re-enable all non-eraser objects unconditionally when entering select
-  //   3. Cursor is reset reliably on all canvas elements
-  // ──────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     const canvas = fabricRef.current
     if (!canvas) return
 
-    // Always stop any in-progress panning when the tool changes
     panActiveRef.current  = false
     panLastPosRef.current = null
     panPointerId.current  = null
 
-    // Always stop any in-progress drawing when the tool changes
     isDrawingRef.current = false
     if (currentShapeRef.current) {
-      // Remove unfinished shape if tool switched mid-draw
       canvas.remove(currentShapeRef.current)
       currentShapeRef.current = null
     }
@@ -837,15 +881,11 @@ const Whiteboard = ({
       return `rgba(${r},${g},${b},${a})`
     }
 
-    // Helper: disable every object for non-select modes
     const disableAll = (o) => { o.selectable = false; o.evented = false }
-
-    // Helper: re-enable every object for select mode
     const enableAll = (o) => {
       if (!o.isEraserStroke) { o.selectable = true; o.evented = true }
     }
 
-    // Helper: set cursor on all canvas layers (fixes mobile WebView quirks)
     const setCursorAll = (cur) => {
       canvas.defaultCursor = cur
       canvas.hoverCursor = cur
@@ -933,7 +973,6 @@ const Whiteboard = ({
 
     canvas.renderAll()
   }, [tool, color, strokeWidth, canvasBackground])
-  // ──────────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     const canvas = fabricRef.current
@@ -945,9 +984,6 @@ const Whiteboard = ({
       if (opt.e.button === 2) return
 
       const currentTool = toolRef.current
-
-      // Pan is handled entirely by native pointer events on the container div.
-      // Bail out here so Fabric doesn't interfere.
       if (currentTool === 'pan') return
 
       if (currentTool === 'frame') {
@@ -1075,7 +1111,6 @@ const Whiteboard = ({
           }
           setShowTextBar(true)
 
-          // Switch back to select and fully re-enable all objects
           canvas.defaultCursor = 'default'
           canvas.hoverCursor = 'move'
           canvas.moveCursor = 'move'
@@ -1140,7 +1175,6 @@ const Whiteboard = ({
     }
 
     const onMouseMove = (opt) => {
-      // Pan is handled by native pointer events — skip entirely
       if (toolRef.current === 'pan') return
       if (!isDrawingRef.current || !currentShapeRef.current) return
       const ptr = canvas.getPointer(opt.e)
@@ -1182,7 +1216,6 @@ const Whiteboard = ({
     }
 
     const onMouseUp = (opt) => {
-      // Pan is handled by native pointer events — skip entirely
       if (toolRef.current === 'pan') return
 
       if (currentShapeRef.current) {
@@ -1344,7 +1377,7 @@ const Whiteboard = ({
         <CtxMenu
           x={contextMenu.clientX}
           y={contextMenu.clientY}
-          items={ctxItems(contextMenu.target)}
+          items={ctxItems(contextMenu.target, contextMenu.selectedObjects)}
           onClose={() => setContextMenu(null)}
         />
       )}
