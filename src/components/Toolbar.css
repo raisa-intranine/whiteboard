@@ -134,7 +134,8 @@
 .color-display.open { transform:scale(1.1); box-shadow:0 0 0 2px var(--tb-bg),0 0 0 3.5px var(--tb-accent),var(--tb-shadow-md); }
 
 .color-palette {
-  position:absolute; top:calc(100% + 12px); left:50%; transform:translateX(-50%);
+  position:fixed;
+  transform:translateX(-50%);
   padding:12px; background:var(--tb-bg); border:1px solid var(--tb-border);
   border-radius:var(--tb-radius-lg); box-shadow:var(--tb-shadow-float);
   z-index:2000; animation:paletteIn .14s var(--tb-ease); min-width:160px;
@@ -154,7 +155,7 @@
 /* shapes */
 .shapes-dropdown { position:relative; }
 .shapes-menu {
-  position:absolute; top:calc(100% + 10px); left:0;
+  position:fixed;
   background:var(--tb-bg); border:1px solid var(--tb-border);
   border-radius:var(--tb-radius-lg); box-shadow:var(--tb-shadow-float);
   padding:6px; z-index:2000; min-width:164px; animation:dropIn .14s var(--tb-ease);
@@ -401,19 +402,9 @@
   .stroke-width-control input[type="range"] { width: 40px; }
   .fill-toggle-btn__label { font-size: 11px; }
   .color-palette { 
-    left: auto; 
-    right: 0; 
-    transform: none;
     min-width: 140px;
   }
-  .color-palette::before { 
-    left: auto; 
-    right: 10px; 
-    transform: translateX(0) rotate(45deg);
-  }
   .shapes-menu { 
-    left: auto; 
-    right: 0;
     min-width: 150px;
   }
   .wb-ctx-menu { 
@@ -438,5 +429,194 @@
   .wb-ctx-item { 
     padding: 10px 12px; 
     font-size: 13px;
+  }
+}
+
+
+/* Extra small devices (320px and above) */
+@media (max-width: 320px) {
+  .toolbar {
+    padding: 4px 6px;
+    gap: 2px;
+  }
+  
+  .toolbar-section {
+    padding: 0 3px;
+    gap: 1px;
+  }
+  
+  .tool-btn, .menu-btn {
+    width: 28px;
+    height: 28px;
+  }
+  
+  .tool-btn svg, .menu-btn svg {
+    width: 16px;
+    height: 16px;
+  }
+  
+  .stroke-width-control {
+    display: none; /* Hide on very small screens */
+  }
+  
+  .fill-toggle-btn {
+    height: 26px;
+    padding: 0 6px 0 4px;
+    font-size: 10px;
+  }
+  
+  .fill-toggle-btn__track {
+    width: 20px;
+    height: 12px;
+  }
+  
+  .fill-toggle-btn__thumb {
+    width: 9px;
+    height: 9px;
+  }
+  
+  .fill-toggle-btn.on .fill-toggle-btn__thumb {
+    left: 10px;
+  }
+  
+  .color-display {
+    width: 24px;
+    height: 24px;
+  }
+  
+  .shapes-trigger {
+    padding: 0 4px;
+    gap: 2px;
+  }
+  
+  .shapes-trigger svg {
+    width: 16px;
+    height: 16px;
+  }
+  
+  /* Color palette responsive */
+  .color-palette {
+    min-width: 100px;
+    max-width: calc(100vw - 20px);
+    padding: 8px;
+  }
+  
+  .color-palette::before {
+    display: none; /* Hide arrow on small screens */
+  }
+  
+  .palette-label {
+    font-size: 9px;
+    margin-bottom: 6px;
+  }
+  
+  .palette-grid {
+    grid-template-columns: repeat(4, 22px);
+    gap: 4px;
+  }
+  
+  .color-swatch {
+    width: 22px;
+    height: 22px;
+    border-width: 1.5px;
+  }
+  
+  /* Shapes dropdown responsive */
+  .shapes-menu {
+    min-width: 110px;
+    max-width: calc(100vw - 20px);
+    padding: 4px;
+  }
+  
+  .shapes-menu button {
+    padding: 6px 7px;
+    font-size: 10px;
+    gap: 6px;
+  }
+  
+  .shapes-menu button svg {
+    width: 16px;
+    height: 16px;
+  }
+  
+  .wb-text-bar {
+    padding: 4px 6px;
+    gap: 3px;
+    max-width: 95vw;
+  }
+  
+  .wb-text-bar__font-btn {
+    min-width: 70px;
+    height: 24px;
+    font-size: 10px;
+    padding: 0 6px;
+  }
+  
+  .wb-text-bar__size {
+    gap: 1px;
+  }
+  
+  .wb-text-bar__size-btn {
+    width: 22px;
+    height: 22px;
+    font-size: 14px;
+  }
+  
+  .wb-text-bar__size-input {
+    width: 32px;
+    height: 22px;
+    font-size: 11px;
+  }
+  
+  .wb-text-bar__fmt-btn {
+    width: 24px;
+    height: 24px;
+    font-size: 12px;
+  }
+  
+  .wb-ctx-menu {
+    min-width: 160px;
+  }
+  
+  .wb-ctx-item {
+    padding: 6px 8px;
+    font-size: 11px;
+    gap: 8px;
+  }
+  
+  .wb-ctx-icon {
+    width: 12px;
+    height: 12px;
+  }
+}
+
+/* Additional responsive improvements for 360px - 480px range */
+@media (min-width: 321px) and (max-width: 480px) {
+  .color-palette {
+    max-width: calc(100vw - 32px);
+  }
+  
+  .palette-grid {
+    grid-template-columns: repeat(5, 24px);
+  }
+  
+  .shapes-menu {
+    max-width: calc(100vw - 32px);
+  }
+  
+  .shapes-menu button {
+    font-size: 11px;
+    padding: 7px 8px;
+  }
+}
+
+/* Improvements for 481px - 768px range */
+@media (min-width: 481px) and (max-width: 768px) {
+  .color-palette {
+    max-width: 200px;
+  }
+  
+  .shapes-menu {
+    max-width: 180px;
   }
 }

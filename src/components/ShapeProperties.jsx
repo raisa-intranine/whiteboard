@@ -49,9 +49,14 @@ const ShapeProperties = ({ canvas, selectedObject }) => {
   const [sloppiness,  setSloppiness]  = useState('neat')
   const [edgeType,    setEdgeType]    = useState('sharp')
   const [opacity,     setOpacity]     = useState(100)
+  const [isVisible,   setIsVisible]   = useState(true)
 
   useEffect(() => {
-    if (!selectedObject) return
+    if (!selectedObject) {
+      setIsVisible(false)
+      return
+    }
+    setIsVisible(true)
     setStrokeColor(selectedObject.stroke || '#000000')
     // Read fill — treat null/undefined/''/false as transparent
     const f = selectedObject.fill
@@ -177,7 +182,7 @@ const ShapeProperties = ({ canvas, selectedObject }) => {
     canvas.renderAll()
   }
 
-  if (!selectedObject) return null
+  if (!selectedObject || !isVisible) return null
 
   return (
     <div className="shape-properties">
@@ -187,6 +192,11 @@ const ShapeProperties = ({ canvas, selectedObject }) => {
           <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
         </svg>
         <span>Shape</span>
+        <button className="sp-close" onClick={() => setIsVisible(false)} title="Close">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
       </div>
 
       <div className="properties-section">

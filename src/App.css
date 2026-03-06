@@ -45,3 +45,15 @@
     opacity: 1;
   }
 }
+
+
+/* Extra small devices (320px and below) */
+@media (max-width: 320px) {
+  .app {
+    font-size: 12px;
+  }
+  
+  .sidebar-backdrop {
+    background: rgba(0, 0, 0, 0.6);
+  }
+}

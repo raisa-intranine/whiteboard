@@ -67,7 +67,12 @@ const Toolbar = ({
 
   const paletteRef   = useRef(null)
   const shapesRef    = useRef(null)
+  const shapesBtnRef = useRef(null)
+  const colorBtnRef  = useRef(null)
   const fileInputRef = useRef(null)
+
+  const [shapesMenuPos, setShapesMenuPos] = useState({ top: 0, left: 0 })
+  const [palettePos, setPalettePos] = useState({ top: 0, left: 0 })
 
   useEffect(() => {
     const handler = (e) => {
@@ -77,6 +82,52 @@ const Toolbar = ({
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [])
+
+  useEffect(() => {
+    if (showShapes && shapesBtnRef.current) {
+      const rect = shapesBtnRef.current.getBoundingClientRect()
+      const menuWidth = 164 // min-width of shapes menu
+      let left = rect.left
+      
+      // Prevent overflow on right side
+      if (left + menuWidth > window.innerWidth) {
+        left = window.innerWidth - menuWidth - 10
+      }
+      
+      // Prevent overflow on left side
+      if (left < 10) {
+        left = 10
+      }
+      
+      setShapesMenuPos({
+        top: rect.bottom + 10,
+        left: left
+      })
+    }
+  }, [showShapes])
+
+  useEffect(() => {
+    if (showPalette && colorBtnRef.current) {
+      const rect = colorBtnRef.current.getBoundingClientRect()
+      const paletteWidth = 160 // min-width of color palette
+      let left = rect.left + rect.width / 2
+      
+      // Prevent overflow on right side
+      if (left + paletteWidth / 2 > window.innerWidth) {
+        left = window.innerWidth - paletteWidth / 2 - 10
+      }
+      
+      // Prevent overflow on left side
+      if (left - paletteWidth / 2 < 10) {
+        left = paletteWidth / 2 + 10
+      }
+      
+      setPalettePos({
+        top: rect.bottom + 12,
+        left: left
+      })
+    }
+  }, [showPalette])
 
   const handleDelete = () => window.__wbDelete?.()
 
@@ -127,6 +178,7 @@ const Toolbar = ({
 
         <div className="shapes-dropdown" ref={shapesRef}>
           <button
+            ref={shapesBtnRef}
             className={`tool-btn shapes-trigger ${SHAPE_IDS.includes(tool)?'active':''}`}
             onClick={() => setShowShapes(v => !v)}
             data-tooltip="Shapes"
@@ -135,7 +187,7 @@ const Toolbar = ({
             {IC.chevron}
           </button>
           {showShapes && (
-            <div className="shapes-menu">
+            <div className="shapes-menu" style={{ top: `${shapesMenuPos.top}px`, left: `${shapesMenuPos.left}px` }}>
               {SHAPES.map(s => (
                 <button key={s.id} className={tool===s.id?'active':''}
                   onClick={() => { setTool(s.id); setShowShapes(false) }}>
@@ -158,13 +210,14 @@ const Toolbar = ({
       <div className="toolbar-section">
         <div className="color-palette-wrapper" ref={paletteRef}>
           <button
+            ref={colorBtnRef}
             className={`color-display ${showPalette?'open':''}`}
             style={{ backgroundColor: color }}
             onClick={() => setShowPalette(v => !v)}
             aria-label="Pick colour"
           />
           {showPalette && (
-            <div className="color-palette">
+            <div className="color-palette" style={{ top: `${palettePos.top}px`, left: `${palettePos.left}px` }}>
               <div className="palette-label">Colour</div>
               <div className="palette-grid">
                 {COLORS.map(c => (

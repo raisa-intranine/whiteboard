@@ -11,9 +11,23 @@ function App() {
   const [color, setColor] = useState('#000000')
   const [strokeWidth, setStrokeWidth] = useState(2)
   const [canvasRef, setCanvasRef] = useState(null)
-  const [theme, setTheme] = useState('light')
+  const [theme, setThemeState] = useState(() => localStorage.getItem('wb_theme') || 'light')
+
+  const DARK_DEFAULT_BG = '#1e1f20'
+  const LIGHT_DEFAULT_BG = '#ffffff'
+
+  const setTheme = (newTheme) => {
+    localStorage.setItem('wb_theme', newTheme)
+    setThemeState(newTheme)
+    // Auto-switch canvas background to match the new theme default
+    const newBg = newTheme === 'dark' ? DARK_DEFAULT_BG : LIGHT_DEFAULT_BG
+    setCanvasBackground(newBg)
+    localStorage.setItem('wb_background_v2', newBg)
+  }
   const [canvasBackground, setCanvasBackground] = useState(() => {
-    return localStorage.getItem('wb_background_v2') || '#ffffff'
+    const saved = localStorage.getItem('wb_background_v2')
+    if (saved) return saved
+    return localStorage.getItem('wb_theme') === 'dark' ? '#1e1f20' : '#ffffff'
   })
   const [showSidebar, setShowSidebar] = useState(false)
   const [fillShape, setFillShape] = useState(false)
@@ -42,7 +56,7 @@ function App() {
   }
 
   return (
-    <AuthGate>
+    <AuthGate theme={theme}>
       <div className={`app ${theme}`}>
         <Toolbar
           tool={tool}
@@ -65,7 +79,7 @@ function App() {
         <div className="main-content">
           {showSidebar && (
             <>
-              <div 
+              <div
                 className={`sidebar-backdrop ${showSidebar ? 'active' : ''}`}
                 onClick={() => setShowSidebar(false)}
               />
@@ -76,6 +90,7 @@ function App() {
                 setCanvasBackground={setCanvasBackground}
                 canvas={canvasRef}
                 isOpen={showSidebar}
+                onClose={() => setShowSidebar(false)}
               />
             </>
           )}
@@ -88,6 +103,7 @@ function App() {
             canvasBackground={canvasBackground}
             fillShape={fillShape}
             onHistoryChange={handleHistoryChange}
+            theme={theme}
           />
         </div>
 

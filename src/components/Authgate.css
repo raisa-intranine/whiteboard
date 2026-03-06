@@ -453,3 +453,179 @@
 .ag-app-wrap > div {
   height: 100%;
 }
+
+
+/* ══════════════════════════════════════
+   DARK MODE
+══════════════════════════════════════ */
+.ag-topbar.dark {
+  background: #1e1f20;
+  border-bottom-color: #2e2f31;
+}
+
+.ag-topbar.dark .ag-topbar-brand {
+  color: #e3e3e3;
+}
+
+.ag-topbar.dark .ag-share-btn {
+  background: #1a2e48;
+  border-color: rgba(123, 170, 247, 0.2);
+  color: #7baaf7;
+}
+
+.ag-topbar.dark .ag-share-btn:hover {
+  background: #243a56;
+  border-color: rgba(123, 170, 247, 0.35);
+  color: #8ab4f8;
+}
+
+.ag-topbar.dark .ag-share-btn.copied {
+  background: #1e3a2e;
+  border-color: rgba(52, 168, 83, 0.3);
+  color: #81c995;
+}
+
+.ag-topbar.dark .ag-profile-dropdown {
+  background: #1e1f20;
+  border-color: #2e2f31;
+}
+
+.ag-topbar.dark .ag-profile-name {
+  color: #e3e3e3;
+}
+
+.ag-topbar.dark .ag-profile-email {
+  color: #9a9a9a;
+}
+
+.ag-topbar.dark .ag-profile-divider {
+  background: #2e2f31;
+}
+
+.ag-topbar.dark .ag-profile-logout {
+  color: #9a9a9a;
+}
+
+.ag-topbar.dark .ag-profile-logout:hover {
+  background: #3a2020;
+  color: #f28b82;
+}
+
+
+/* Extra small devices (320px and below) */
+@media (max-width: 320px) {
+  .ag-topbar {
+    height: 56px;
+    padding: 0 8px;
+  }
+  
+  .ag-topbar-brand {
+    font-size: 13px;
+    gap: 6px;
+  }
+  
+  .ag-topbar-brand svg {
+    width: 16px;
+    height: 16px;
+  }
+  
+  .ag-topbar-right {
+    gap: 6px;
+  }
+  
+  .ag-share-btn {
+    padding: 5px 10px;
+    font-size: 11px;
+    gap: 4px;
+  }
+  
+  .ag-share-btn svg {
+    width: 12px;
+    height: 12px;
+  }
+  
+  .ag-avatar {
+    width: 26px;
+    height: 26px;
+    font-size: 10px;
+  }
+  
+  .ag-profile-dropdown {
+    width: 200px;
+    right: -8px;
+  }
+  
+  .ag-profile-header {
+    padding: 12px;
+    gap: 8px;
+  }
+  
+  .ag-profile-avatar {
+    width: 30px;
+    height: 30px;
+    font-size: 12px;
+  }
+  
+  .ag-profile-name {
+    font-size: 12px;
+  }
+  
+  .ag-profile-email {
+    font-size: 10px;
+  }
+  
+  .ag-profile-logout {
+    padding: 9px 12px;
+    font-size: 12px;
+    gap: 6px;
+  }
+  
+  .ag-profile-logout svg {
+    width: 12px;
+    height: 12px;
+  }
+  
+  .ag-app-wrap {
+    padding-top: 56px;
+  }
+  
+  .ag-card {
+    max-width: calc(100vw - 32px);
+    padding: 24px 20px 20px;
+  }
+  
+  .ag-logo {
+    width: 36px;
+    height: 36px;
+    margin-bottom: 12px;
+  }
+  
+  .ag-title {
+    font-size: 20px;
+  }
+  
+  .ag-sub {
+    font-size: 12px;
+  }
+  
+  .ag-tab {
+    font-size: 12px;
+    padding: 6px 0;
+  }
+  
+  .ag-input {
+    padding: 9px 10px;
+    font-size: 13px;
+  }
+  
+  .ag-submit {
+    padding: 10px;
+    font-size: 13px;
+    min-height: 38px;
+  }
+  
+  .ag-error {
+    font-size: 11px;
+    padding: 8px 10px;
+  }
+}

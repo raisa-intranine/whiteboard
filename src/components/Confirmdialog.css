@@ -168,3 +168,31 @@
     width: 100%;
   }
 }
+
+
+/* Extra small devices (320px and below) */
+@media (max-width: 320px) {
+  .confirm-dialog__content {
+    max-width: calc(100vw - 24px);
+    padding: 16px;
+  }
+  
+  .confirm-dialog__title {
+    font-size: 16px;
+    margin-bottom: 8px;
+  }
+  
+  .confirm-dialog__message {
+    font-size: 12px;
+    margin-bottom: 16px;
+  }
+  
+  .confirm-dialog__actions {
+    gap: 6px;
+  }
+  
+  .confirm-dialog__btn {
+    padding: 9px 14px;
+    font-size: 12px;
+  }
+}

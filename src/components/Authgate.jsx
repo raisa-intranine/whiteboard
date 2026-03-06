@@ -33,7 +33,7 @@ const getAvatarColor = (email) => {
   return AVATAR_COLORS[idx]
 }
 
-export default function AuthGate({ children }) {
+export default function AuthGate({ children, theme }) {
   const [user, setUser]           = useState(null)
   const [mode, setMode]           = useState('login')
   const [form, setForm]           = useState({ name: '', email: '', password: '', confirm: '' })
@@ -128,7 +128,7 @@ export default function AuthGate({ children }) {
   if (user) {
     return (
       <>
-        <div className="ag-topbar">
+        <div className={`ag-topbar ${theme === 'dark' ? 'dark' : ''}`}>
           <div className="ag-topbar-brand">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
