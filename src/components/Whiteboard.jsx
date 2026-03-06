@@ -3,9 +3,11 @@ import { fabric } from 'fabric'
 import ShapeProperties from './ShapeProperties'
 import LaserPointer from './Laserpointer'
 import './Whiteboard.css'
+import { loadBoard, saveBoard } from '../services/api'
+import { initRealtime, publishDelta, disconnectRealtime } from '../services/realtime'
 
 const SHAPE_TYPES = ['rect', 'circle', 'triangle', 'polygon', 'ellipse', 'group', 'i-text', 'textbox', 'image']
-const STORAGE_KEY = 'wb_canvas_v2'
+const STORAGE_KEY = 'wb_canvas_v2'   // kept as localStorage fallback
 const STORAGE_BG = 'wb_background_v2'
 const FONTS = ['DM Sans', 'Arial', 'Georgia', 'Courier New', 'Verdana', 'Times New Roman', 'Trebuchet MS']
 
@@ -16,65 +18,131 @@ const SERIALIZE_PROPS = [
   'isPlaceholder', 'placeholderText',
 ]
 
+// Debounce helper for throttling backend saves
+const debounce = (fn, ms) => {
+  let timer = null
+  return (...args) => {
+    clearTimeout(timer)
+    timer = setTimeout(() => fn(...args), ms)
+  }
+}
+
+// Resolve the boardId: from ?board= URL param, or from stored session
+const resolveBoardId = () => {
+  const params = new URLSearchParams(window.location.search)
+  const boardParam = params.get('board')
+  if (boardParam) return boardParam
+  try {
+    const session = JSON.parse(localStorage.getItem('wb_session_v1'))
+    return session?.boardId || null
+  } catch {
+    return null
+  }
+}
+
 // Container-drag helpers removed intentionally.
 // Objects should only move together when explicitly grouped by the user.
+
+// Write canvas to localStorage (always, as an offline fallback),
+// and debounce-save to the backend when a boardId is available.
+const saveToBoardApi = debounce(async (boardId, canvasJson, background) => {
+  try {
+    await saveBoard(boardId, { canvasJson, background })
+  } catch (err) {
+    console.warn('[Whiteboard] Backend save failed:', err.message)
+  }
+}, 2000)
 
 const serializeCanvas = (canvas) => {
   try {
     const json = canvas.toJSON(SERIALIZE_PROPS)
     const str = JSON.stringify(json)
-    if (str && str.length > 10) {
-      localStorage.setItem(STORAGE_KEY, str)
-      localStorage.setItem(STORAGE_BG, canvas.backgroundColor || '#ffffff')
-    }
+    if (!str || str.length <= 10) return
+    // Always keep a local copy so the app works offline / without a token
+    localStorage.setItem(STORAGE_KEY, str)
+    localStorage.setItem(STORAGE_BG, canvas.backgroundColor || '#ffffff')
+    // Also push to the backend (debounced)
+    const boardId = resolveBoardId()
+    if (boardId) saveToBoardApi(boardId, json, canvas.backgroundColor || '#ffffff')
   } catch (err) {
     console.warn('[Whiteboard] Save failed:', err)
   }
 }
 
+// Helper: load JSON into the canvas and restore object state
+const loadJsonIntoCanvas = (canvas, parsed, onDone) => {
+  canvas.loadFromJSON(parsed, () => {
+    canvas.getObjects().forEach(obj => {
+      obj.set({ selectable: true, evented: true, objectCaching: true, padding: 10 })
+      if (obj.isEraserStroke) obj.set({ selectable: false, evented: false })
+      if (obj.type === 'line') {
+        obj.set({ perPixelTargetFind: true, hasBorders: false })
+        applyLineControls(obj)
+      }
+      if (obj.stickyText) {
+        const txt = canvas.getObjects().find(o => o === obj.stickyText)
+        if (txt) {
+          obj.on('moving', function () {
+            this.stickyText?.set({ left: this.left + 16, top: this.top + 16 })
+            this.stickyText?.setCoords()
+          })
+          obj.on('scaling', function () {
+            this.stickyText?.set({ left: this.left + 16, top: this.top + 16 })
+            this.stickyText?.setCoords()
+          })
+          obj.on('rotating', function () {
+            this.stickyText?.set({ left: this.left + 16, top: this.top + 16 })
+            this.stickyText?.setCoords()
+          })
+        }
+      }
+      obj.setCoords()
+    })
+    canvas.renderAll()
+    onDone()
+  }, (o, fabricObj) => { if (fabricObj) fabricObj.setCoords() })
+}
+
+// Try loading from backend first; fall back to localStorage if unavailable.
 const deserializeCanvas = (canvas, onDone) => {
+  const boardId = resolveBoardId()
+
+  if (boardId) {
+    loadBoard(boardId)
+      .then(({ canvasJson, background }) => {
+        if (background) canvas.setBackgroundColor(background, () => { })
+        if (canvasJson && canvasJson.objects) {
+          loadJsonIntoCanvas(canvas, canvasJson, onDone)
+        } else {
+          onDone()
+        }
+      })
+      .catch(err => {
+        console.warn('[Whiteboard] Backend load failed, using localStorage:', err.message)
+        // Fallback to localStorage
+        try {
+          const bg = localStorage.getItem(STORAGE_BG)
+          const raw = localStorage.getItem(STORAGE_KEY)
+          if (bg) canvas.setBackgroundColor(bg, () => { })
+          if (raw) {
+            const parsed = JSON.parse(raw)
+            if (parsed?.objects) { loadJsonIntoCanvas(canvas, parsed, onDone); return }
+          }
+        } catch (_) { }
+        onDone()
+      })
+    return
+  }
+
+  // No boardId — use localStorage only (guest / unauthenticated)
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
     const bg = localStorage.getItem(STORAGE_BG)
+    const raw = localStorage.getItem(STORAGE_KEY)
     if (bg) canvas.setBackgroundColor(bg, () => { })
     if (!raw) { onDone(); return }
     const parsed = JSON.parse(raw)
-    if (!parsed || !parsed.objects) { onDone(); return }
-    canvas.loadFromJSON(parsed, () => {
-      canvas.getObjects().forEach(obj => {
-        obj.set({ selectable: true, evented: true, objectCaching: true, padding: 10 })
-        if (obj.isEraserStroke) obj.set({ selectable: false, evented: false })
-
-        if (obj.type === 'line') {
-          obj.set({ perPixelTargetFind: true, hasBorders: false })
-          applyLineControls(obj)
-        }
-
-        if (obj.stickyText) {
-          const txt = canvas.getObjects().find(o => o === obj.stickyText)
-          if (txt) {
-            obj.on('moving', function () {
-              this.stickyText?.set({ left: this.left + 16, top: this.top + 16 })
-              this.stickyText?.setCoords()
-            })
-            obj.on('scaling', function () {
-              this.stickyText?.set({ left: this.left + 16, top: this.top + 16 })
-              this.stickyText?.setCoords()
-            })
-            obj.on('rotating', function () {
-              this.stickyText?.set({ left: this.left + 16, top: this.top + 16 })
-              this.stickyText?.setCoords()
-            })
-          }
-        }
-
-        obj.setCoords()
-      })
-      canvas.renderAll()
-      onDone()
-    }, (o, fabricObj) => {
-      if (fabricObj) fabricObj.setCoords()
-    })
+    if (!parsed?.objects) { onDone(); return }
+    loadJsonIntoCanvas(canvas, parsed, onDone)
   } catch (err) {
     console.warn('[Whiteboard] Load failed:', err)
     onDone()
@@ -267,17 +335,17 @@ const applyLineControls = (line) => {
   line.controls = {
     p1: new fabric.Control({
       positionHandler: linePositionHandler('p1'),
-      actionHandler:   lineActionHandler('p1'),
-      render:          renderLineHandle,
-      actionName:      'modifyLine',
-      cursorStyle:     'crosshair',
+      actionHandler: lineActionHandler('p1'),
+      render: renderLineHandle,
+      actionName: 'modifyLine',
+      cursorStyle: 'crosshair',
     }),
     p2: new fabric.Control({
       positionHandler: linePositionHandler('p2'),
-      actionHandler:   lineActionHandler('p2'),
-      render:          renderLineHandle,
-      actionName:      'modifyLine',
-      cursorStyle:     'crosshair',
+      actionHandler: lineActionHandler('p2'),
+      render: renderLineHandle,
+      actionName: 'modifyLine',
+      cursorStyle: 'crosshair',
     }),
   }
   line.set({ hasControls: true, hasBorders: false })
@@ -328,15 +396,17 @@ const Whiteboard = ({
   tool, setTool, color, strokeWidth,
   setCanvasRef, canvasBackground, fillShape, onHistoryChange, theme,
 }) => {
+  // Ref to suppress local re-processing of our own realtime echo
+  const realtimeIgnoreRef = useRef(false)
   const containerRef = useRef(null)
   const canvasRef = useRef(null)
   const fabricRef = useRef(null)
   const isDrawingRef = useRef(false)
   const startPointRef = useRef(null)
   const currentShapeRef = useRef(null)
-  const panActiveRef   = useRef(false)
-  const panLastPosRef  = useRef(null)
-  const panPointerId   = useRef(null)
+  const panActiveRef = useRef(false)
+  const panLastPosRef = useRef(null)
+  const panPointerId = useRef(null)
 
   const historyRef = useRef([])
   const historyIdxRef = useRef(-1)
@@ -502,7 +572,7 @@ const Whiteboard = ({
     setCanvasRef(canvas)
 
     const origTextboxRender = fabric.Textbox.prototype._render
-    const origITextRender   = fabric.IText.prototype._render
+    const origITextRender = fabric.IText.prototype._render
 
     fabric.Textbox.prototype._render = function (ctx) {
       if (this.isPlaceholder && this.text === '' && !this.isEditing) {
@@ -520,15 +590,61 @@ const Whiteboard = ({
       }
     }
 
+    // ── Load board data (backend → localStorage fallback) ─────────────────
     deserializeCanvas(canvas, () => pushSnapshot())
 
-    const onMutation = () => {
-      if (isMutingRef.current || isDrawingRef.current) return
-      serializeCanvas(canvas); pushSnapshot()
+    // ── Initialize Ably realtime collaboration ────────────────────────────
+    const boardId = resolveBoardId()
+    if (boardId) {
+      initRealtime(boardId, (msg) => {
+        // Received a drawing delta from another collaborator
+        if (!msg || msg.type !== 'canvas:delta' || !msg.payload) return
+        realtimeIgnoreRef.current = true
+        const fabricObject = msg.payload
+        // Find existing object by custom id or just add new
+        const existing = canvas.getObjects().find(o => o.realtimeId === fabricObject.realtimeId)
+        if (fabricObject._deleted) {
+          if (existing) { canvas.remove(existing); canvas.renderAll() }
+        } else if (existing) {
+          existing.set(fabricObject)
+          existing.setCoords()
+          canvas.renderAll()
+        } else {
+          fabric.util.enlivenObjects([fabricObject], ([obj]) => {
+            if (obj) { canvas.add(obj); canvas.renderAll() }
+          })
+        }
+        realtimeIgnoreRef.current = false
+      }).catch(err => console.warn('[Whiteboard] Realtime init failed:', err.message))
+    }
+
+    // ── Canvas mutation handler: save + broadcast ─────────────────────────
+    const onMutation = (e) => {
+      if (isMutingRef.current || isDrawingRef.current || realtimeIgnoreRef.current) return
+      serializeCanvas(canvas)
+      pushSnapshot()
+      // Broadcast delta to collaborators via Ably
+      if (boardId && e?.target) {
+        const obj = e.target
+        const delta = obj.toJSON(SERIALIZE_PROPS)
+        delta.realtimeId = obj.realtimeId || obj.__uid
+        publishDelta({ type: 'canvas:delta', payload: delta })
+      }
     }
     canvas.on('object:added', onMutation)
     canvas.on('object:modified', onMutation)
-    canvas.on('object:removed', onMutation)
+    canvas.on('object:removed', (e) => {
+      if (isMutingRef.current || isDrawingRef.current || realtimeIgnoreRef.current) return
+      serializeCanvas(canvas)
+      pushSnapshot()
+      // Broadcast deletion
+      if (boardId && e?.target) {
+        const delta = e.target.toJSON(SERIALIZE_PROPS)
+        delta.realtimeId = e.target.realtimeId || e.target.__uid
+        delta._deleted = true
+        publishDelta({ type: 'canvas:delta', payload: delta })
+      }
+    })
 
     canvas.on('path:created', (opt) => {
       if (toolRef.current === 'eraser')
@@ -580,8 +696,8 @@ const Whiteboard = ({
       const br = obj.getBoundingRect(true, true)
       setTextBarPosition({
         left: canvasRect.left + br.left,
-        top:  canvasRect.top  + br.top,
-        width:  br.width,
+        top: canvasRect.top + br.top,
+        width: br.width,
         height: br.height,
       })
     }
@@ -662,10 +778,10 @@ const Whiteboard = ({
     const onPanPointerDown = (e) => {
       if (toolRef.current !== 'pan') return
       if (panActiveRef.current) return
-      panActiveRef.current  = true
-      panPointerId.current  = e.pointerId
+      panActiveRef.current = true
+      panPointerId.current = e.pointerId
       panLastPosRef.current = { x: e.clientX, y: e.clientY }
-      try { container.setPointerCapture(e.pointerId) } catch (_) {}
+      try { container.setPointerCapture(e.pointerId) } catch (_) { }
       e.preventDefault()
       e.stopPropagation()
     }
@@ -685,15 +801,15 @@ const Whiteboard = ({
     const stopPan = (e) => {
       if (!panActiveRef.current) return
       if (e.pointerId !== panPointerId.current) return
-      panActiveRef.current  = false
+      panActiveRef.current = false
       panLastPosRef.current = null
-      panPointerId.current  = null
-      try { container.releasePointerCapture(e.pointerId) } catch (_) {}
+      panPointerId.current = null
+      try { container.releasePointerCapture(e.pointerId) } catch (_) { }
     }
-    container.addEventListener('pointerdown',   onPanPointerDown, { passive: false })
-    container.addEventListener('pointermove',   onPanPointerMove, { passive: false })
-    container.addEventListener('pointerup',     stopPan,          { passive: true })
-    container.addEventListener('pointercancel', stopPan,          { passive: true })
+    container.addEventListener('pointerdown', onPanPointerDown, { passive: false })
+    container.addEventListener('pointermove', onPanPointerMove, { passive: false })
+    container.addEventListener('pointerup', stopPan, { passive: true })
+    container.addEventListener('pointercancel', stopPan, { passive: true })
     // ──────────────────────────────────────────────────────────────────────
 
     // Capture the desktop (home) size once at mount. Never overwrite.
@@ -727,7 +843,7 @@ const Whiteboard = ({
           minX = Math.min(minX, br.left)
           minY = Math.min(minY, br.top)
           maxX = Math.max(maxX, br.left + br.width)
-          maxY = Math.max(maxY, br.top  + br.height)
+          maxY = Math.max(maxY, br.top + br.height)
         })
 
         const isFullSize = width >= homeW - 2 && height >= homeH - 2
@@ -741,7 +857,7 @@ const Whiteboard = ({
           const contentW = maxX - minX + padding * 2
           const contentH = maxY - minY + padding * 2
           const zoom = Math.min(width / contentW, height / contentH, 1)
-          const panX = (width  - (maxX + minX) * zoom) / 2
+          const panX = (width - (maxX + minX) * zoom) / 2
           const panY = (height - (maxY + minY) * zoom) / 2
           canvas.setViewportTransform([zoom, 0, 0, zoom, panX, panY])
         }
@@ -750,16 +866,19 @@ const Whiteboard = ({
       }
     })
     resizeObserver.observe(container)
-    const onBeforeUnload = () => serializeCanvas(canvas)
+    const onBeforeUnload = () => {
+      serializeCanvas(canvas)
+      disconnectRealtime()
+    }
     window.addEventListener('beforeunload', onBeforeUnload)
 
     return () => {
       fabric.Textbox.prototype._render = origTextboxRender
-      fabric.IText.prototype._render   = origITextRender
+      fabric.IText.prototype._render = origITextRender
       ctxEl?.removeEventListener('contextmenu', handleContextMenu)
-      container.removeEventListener('pointerdown',   onPanPointerDown)
-      container.removeEventListener('pointermove',   onPanPointerMove)
-      container.removeEventListener('pointerup',     stopPan)
+      container.removeEventListener('pointerdown', onPanPointerDown)
+      container.removeEventListener('pointermove', onPanPointerMove)
+      container.removeEventListener('pointerup', stopPan)
       container.removeEventListener('pointercancel', stopPan)
       resizeObserver.disconnect()
       window.removeEventListener('beforeunload', onBeforeUnload)
@@ -888,9 +1007,9 @@ const Whiteboard = ({
     const canvas = fabricRef.current
     if (!canvas) return
 
-    panActiveRef.current  = false
+    panActiveRef.current = false
     panLastPosRef.current = null
-    panPointerId.current  = null
+    panPointerId.current = null
 
     isDrawingRef.current = false
     if (currentShapeRef.current) {
@@ -1132,12 +1251,12 @@ const Whiteboard = ({
           txt.placeholderText = 'Note…'
           rect.stickyText = txt
           txt.stickyRect = rect
-          rect.on('moving',   function () { this.stickyText?.set({ left: this.left + 16, top: this.top + 16 }); this.stickyText?.setCoords() })
-          rect.on('scaling',  function () { this.stickyText?.set({ left: this.left + 16, top: this.top + 16 }); this.stickyText?.setCoords() })
+          rect.on('moving', function () { this.stickyText?.set({ left: this.left + 16, top: this.top + 16 }); this.stickyText?.setCoords() })
+          rect.on('scaling', function () { this.stickyText?.set({ left: this.left + 16, top: this.top + 16 }); this.stickyText?.setCoords() })
           rect.on('rotating', function () { this.stickyText?.set({ left: this.left + 16, top: this.top + 16 }); this.stickyText?.setCoords() })
           txt.on('editing:entered', function () { canvas.renderAll() })
-          txt.on('editing:exited',  function () { this.isPlaceholder = (this.text.trim() === ''); canvas.renderAll() })
-          txt.on('changed',         function () { this.isPlaceholder = (this.text.trim() === ''); canvas.renderAll() })
+          txt.on('editing:exited', function () { this.isPlaceholder = (this.text.trim() === ''); canvas.renderAll() })
+          txt.on('changed', function () { this.isPlaceholder = (this.text.trim() === ''); canvas.renderAll() })
           canvas.add(rect)
           canvas.add(txt)
           canvas.setActiveObject(txt)
@@ -1215,7 +1334,7 @@ const Whiteboard = ({
           obj._originalX1 = obj.x1; obj._originalY1 = obj.y1
           obj._originalX2 = obj.x2; obj._originalY2 = obj.y2
           obj._lastLeft = obj.left; obj._lastTop = obj.top
-          obj.on('moving', function() {
+          obj.on('moving', function () {
             const dx = this.left - (this._lastLeft || this.left)
             const dy = this.top - (this._lastTop || this.top)
             this.set({ x1: this.x1 + dx, y1: this.y1 + dy, x2: this.x2 + dx, y2: this.y2 + dy })

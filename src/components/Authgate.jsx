@@ -1,32 +1,16 @@
 import { useState, useEffect, useRef } from 'react'
+import { signup, login, getMe, setToken, clearToken, getToken } from '../services/api'
 import './AuthGate.css'
 
-const USERS_KEY = 'wb_users_v1'
-const SESSION_KEY = 'wb_session_v1'
+const SESSION_KEY = 'wb_session_v1' // kept for name/email cache only (no passwords)
 
-const getUsers = () => {
-  try { return JSON.parse(localStorage.getItem(USERS_KEY)) || {} } catch { return {} }
-}
-const saveUsers = (users) => localStorage.setItem(USERS_KEY, JSON.stringify(users))
-const getSession = () => {
-  try { return JSON.parse(localStorage.getItem(SESSION_KEY)) } catch { return null }
-}
-const saveSession = (user) => localStorage.setItem(SESSION_KEY, JSON.stringify(user))
-const clearSession = () => localStorage.removeItem(SESSION_KEY)
-
-const generateBoardId = (email) => {
-  const hash = Array.from(email).reduce((acc, c) => acc + c.charCodeAt(0), 0)
-  return `board-${hash}-${email.replace(/[^a-z0-9]/gi, '').slice(0, 8)}`
-}
-
-const getInitials = (name) => {
-  return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
-}
+const getInitials = (name) =>
+  name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
 
 const AVATAR_COLORS = [
-  ['#667eea','#764ba2'],['#f093fb','#f5576c'],['#4facfe','#00f2fe'],
-  ['#43e97b','#38f9d7'],['#fa709a','#fee140'],['#a18cd1','#fbc2eb'],
-  ['#fccb90','#d57eeb'],['#a1c4fd','#c2e9fb'],
+  ['#667eea', '#764ba2'], ['#f093fb', '#f5576c'], ['#4facfe', '#00f2fe'],
+  ['#43e97b', '#38f9d7'], ['#fa709a', '#fee140'], ['#a18cd1', '#fbc2eb'],
+  ['#fccb90', '#d57eeb'], ['#a1c4fd', '#c2e9fb'],
 ]
 const getAvatarColor = (email) => {
   const idx = Array.from(email).reduce((a, c) => a + c.charCodeAt(0), 0) % AVATAR_COLORS.length
@@ -34,22 +18,41 @@ const getAvatarColor = (email) => {
 }
 
 export default function AuthGate({ children, theme }) {
-  const [user, setUser]           = useState(null)
-  const [mode, setMode]           = useState('login')
-  const [form, setForm]           = useState({ name: '', email: '', password: '', confirm: '' })
-  const [error, setError]         = useState('')
-  const [copied, setCopied]       = useState(false)
-  const [loading, setLoading]     = useState(false)
+  const [user, setUser] = useState(null)
+  const [mode, setMode] = useState('login')
+  const [form, setForm] = useState({ name: '', email: '', password: '', confirm: '' })
+  const [error, setError] = useState('')
+  const [copied, setCopied] = useState(false)
+  const [loading, setLoading] = useState(false)
   const [showProfile, setShowProfile] = useState(false)
-  const [mounted, setMounted]     = useState(false)
-  const profileRef                = useRef(null)
+  const [mounted, setMounted] = useState(false)
+  const [bootstrapping, setBootstrapping] = useState(true) // true while re-hydrating session
+  const profileRef = useRef(null)
 
+  // ── Re-hydrate session on mount using stored JWT ──────────────────────────
   useEffect(() => {
-    const session = getSession()
-    if (session) setUser(session)
-    setTimeout(() => setMounted(true), 50)
+    const token = getToken()
+    if (!token) {
+      setBootstrapping(false)
+      setTimeout(() => setMounted(true), 50)
+      return
+    }
+    getMe()
+      .then(u => {
+        setUser(u)
+        localStorage.setItem(SESSION_KEY, JSON.stringify(u))
+      })
+      .catch(() => {
+        clearToken()
+        localStorage.removeItem(SESSION_KEY)
+      })
+      .finally(() => {
+        setBootstrapping(false)
+        setTimeout(() => setMounted(true), 50)
+      })
   }, [])
 
+  // ── Close profile dropdown on outside click ───────────────────────────────
   useEffect(() => {
     const handle = (e) => {
       if (profileRef.current && !profileRef.current.contains(e.target)) setShowProfile(false)
@@ -60,57 +63,62 @@ export default function AuthGate({ children, theme }) {
 
   const field = (key, val) => setForm(f => ({ ...f, [key]: val }))
 
-  const handleLogin = () => {
+  // ── Login ─────────────────────────────────────────────────────────────────
+  const handleLogin = async () => {
     setError('')
     if (!form.email || !form.password) { setError('Please fill in all fields.'); return }
-    const users = getUsers()
-    const u = users[form.email.toLowerCase()]
-    if (!u) { setError('No account found with this email.'); return }
-    if (u.password !== form.password) { setError('Incorrect password.'); return }
     setLoading(true)
-    setTimeout(() => {
-      const session = { name: u.name, email: u.email, boardId: u.boardId }
-      saveSession(session)
-      setUser(session)
+    try {
+      const { token, user: u } = await login({ email: form.email, password: form.password })
+      setToken(token)
+      localStorage.setItem(SESSION_KEY, JSON.stringify(u))
+      setUser(u)
+    } catch (err) {
+      setError(err.message || 'Login failed. Please try again.')
+    } finally {
       setLoading(false)
-    }, 600)
+    }
   }
 
-  const handleSignup = () => {
+  // ── Signup ────────────────────────────────────────────────────────────────
+  const handleSignup = async () => {
     setError('')
     if (!form.name.trim()) { setError('Please enter your name.'); return }
     if (!form.email.includes('@')) { setError('Please enter a valid email.'); return }
     if (form.password.length < 6) { setError('Password must be at least 6 characters.'); return }
     if (form.password !== form.confirm) { setError('Passwords do not match.'); return }
-    const users = getUsers()
-    if (users[form.email.toLowerCase()]) { setError('An account with this email already exists.'); return }
     setLoading(true)
-    setTimeout(() => {
-      const boardId = generateBoardId(form.email)
-      const newUser = { name: form.name.trim(), email: form.email.toLowerCase(), password: form.password, boardId }
-      users[form.email.toLowerCase()] = newUser
-      saveUsers(users)
-      const session = { name: newUser.name, email: newUser.email, boardId }
-      saveSession(session)
-      setUser(session)
+    try {
+      const { token, user: u } = await signup({
+        name: form.name.trim(),
+        email: form.email,
+        password: form.password,
+      })
+      setToken(token)
+      localStorage.setItem(SESSION_KEY, JSON.stringify(u))
+      setUser(u)
+    } catch (err) {
+      setError(err.message || 'Sign up failed. Please try again.')
+    } finally {
       setLoading(false)
-    }, 700)
+    }
   }
 
+  // ── Logout ────────────────────────────────────────────────────────────────
   const handleLogout = () => {
-    clearSession()
+    clearToken()
+    localStorage.removeItem(SESSION_KEY)
     setUser(null)
     setShowProfile(false)
     setForm({ name: '', email: '', password: '', confirm: '' })
     setMode('login')
   }
 
+  // ── Share board link ──────────────────────────────────────────────────────
   const handleShare = async () => {
     const boardUrl = `${window.location.origin}${window.location.pathname}?board=${user.boardId}`
     try {
       await navigator.clipboard.writeText(boardUrl)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2500)
     } catch {
       const el = document.createElement('textarea')
       el.value = boardUrl
@@ -118,20 +126,35 @@ export default function AuthGate({ children, theme }) {
       el.select()
       document.execCommand('copy')
       document.body.removeChild(el)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2500)
     }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2500)
   }
 
-  const [grad1, grad2] = user ? getAvatarColor(user.email) : ['#667eea','#764ba2']
+  // ── Loading skeleton while re-hydrating JWT ───────────────────────────────
+  if (bootstrapping) {
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        height: '100vh', background: theme === 'dark' ? '#1e1f20' : '#f5f5f5',
+      }}>
+        <span style={{ opacity: 0.4, fontSize: 14, color: theme === 'dark' ? '#fff' : '#333' }}>
+          Loading…
+        </span>
+      </div>
+    )
+  }
 
+  const [grad1, grad2] = user ? getAvatarColor(user.email) : ['#667eea', '#764ba2']
+
+  // ── Authenticated: render topbar + children ───────────────────────────────
   if (user) {
     return (
       <>
         <div className={`ag-topbar ${theme === 'dark' ? 'dark' : ''}`}>
           <div className="ag-topbar-brand">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+              <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
             </svg>
             <span>Whiteboard</span>
           </div>
@@ -140,14 +163,14 @@ export default function AuthGate({ children, theme }) {
             <button className={`ag-share-btn${copied ? ' copied' : ''}`} onClick={handleShare} title="Copy board link">
               {copied ? (
                 <>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
                   Copied!
                 </>
               ) : (
                 <>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-                    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                    <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
+                    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
                   </svg>
                   Share Board
                 </>
@@ -178,9 +201,9 @@ export default function AuthGate({ children, theme }) {
                   <div className="ag-profile-divider" />
                   <button className="ag-profile-logout" onClick={handleLogout}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-                      <polyline points="16 17 21 12 16 7"/>
-                      <line x1="21" y1="12" x2="9" y2="12"/>
+                      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                      <polyline points="16 17 21 12 16 7" />
+                      <line x1="21" y1="12" x2="9" y2="12" />
                     </svg>
                     Sign out
                   </button>
@@ -196,6 +219,7 @@ export default function AuthGate({ children, theme }) {
     )
   }
 
+  // ── Unauthenticated: render login / signup card ───────────────────────────
   return (
     <div className={`ag-gate ${mounted ? 'ag-mounted' : ''}`}>
       <div className="ag-bg">
@@ -209,10 +233,10 @@ export default function AuthGate({ children, theme }) {
         <div className="ag-card-top">
           <div className="ag-logo">
             <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+              <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
             </svg>
           </div>
-          <h1 className="ag-title">Collaborative<br/>Whiteboard</h1>
+          <h1 className="ag-title">Collaborative<br />Whiteboard</h1>
           <p className="ag-sub">A shared space for your ideas</p>
         </div>
 
