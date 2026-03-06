@@ -58,7 +58,6 @@ const ShapeProperties = ({ canvas, selectedObject }) => {
     }
     setIsVisible(true)
     setStrokeColor(selectedObject.stroke || '#000000')
-    // Read fill — treat null/undefined/''/false as transparent
     const f = selectedObject.fill
     setFillColor(!f || f === '' ? 'transparent' : f)
     setStrokeWidth(selectedObject.strokeWidth ?? 2)

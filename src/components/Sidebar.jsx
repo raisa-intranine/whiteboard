@@ -60,7 +60,6 @@ const THEMES = [
 ]
 
 const Sidebar = ({ theme, setTheme, canvasBackground, setCanvasBackground, canvas, isOpen, onClose }) => {
-  // Resolve actual theme for background options (handles 'auto')
   const getSystemTheme = () => {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
   }
@@ -68,8 +67,6 @@ const Sidebar = ({ theme, setTheme, canvasBackground, setCanvasBackground, canva
   const [actualTheme, setActualTheme] = useState(() => {
     return theme === 'auto' ? getSystemTheme() : theme
   })
-
-  // Update actual theme when theme prop changes or system theme changes
   useEffect(() => {
     if (theme === 'auto') {
       const systemTheme = getSystemTheme()

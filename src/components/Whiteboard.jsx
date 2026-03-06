@@ -88,9 +88,7 @@ const CTX_ICONS = {
   back: <><polyline points="17 6 12 11 7 6" /><polyline points="17 13 12 18 7 13" /></>,
   copy: <><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>,
   delete: <><path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" /></>,
-  // Group icon: two overlapping rectangles with a bracket
   group: <><rect x="2" y="7" width="9" height="9" rx="1.5" /><rect x="13" y="7" width="9" height="9" rx="1.5" /><path d="M8 4h8" strokeDasharray="2 1" /></>,
-  // Ungroup icon: rectangles being separated
   ungroup: <><rect x="2" y="3" width="8" height="8" rx="1.5" /><rect x="14" y="13" width="8" height="8" rx="1.5" /><line x1="10" y1="7" x2="14" y2="17" strokeDasharray="2 2" /></>,
 }
 
@@ -488,11 +486,15 @@ const Whiteboard = ({
       rotationCursor: 'crosshair',
       allowTouchScrolling: false,
     })
+
+    // Use larger corner handles on touch/coarse-pointer devices for easier grabbing
+    const isTouch = window.matchMedia('(pointer: coarse)').matches
     fabric.Object.prototype.set({
       borderColor: '#1a73e8', borderScaleFactor: 1.5,
       cornerColor: '#ffffff', cornerStrokeColor: '#1a73e8',
-      cornerSize: 9, cornerStyle: 'circle',
-      transparentCorners: false, borderDashArray: [4, 2], padding: 6,
+      cornerSize: isTouch ? 14 : 9, cornerStyle: 'circle',
+      transparentCorners: false, borderDashArray: [4, 2],
+      padding: isTouch ? 12 : 6,
       hoverCursor: 'move',
       moveCursor: 'move',
     })
@@ -527,9 +529,6 @@ const Whiteboard = ({
     canvas.on('object:added', onMutation)
     canvas.on('object:modified', onMutation)
     canvas.on('object:removed', onMutation)
-
-    // Container-drag intentionally removed.
-    // Objects only move together when the user explicitly groups them.
 
     canvas.on('path:created', (opt) => {
       if (toolRef.current === 'eraser')
@@ -630,24 +629,19 @@ const Whiteboard = ({
       e.stopPropagation()
 
       const target = canvas.findTarget(e, false)
-      if (!target) return  // right-click on empty canvas — no menu
+      if (!target) return
 
-      // canvas.getActiveObject() returns the ActiveSelection when multiple objects
-      // are selected. canvas.getActiveObjects() returns the individual objects within it.
       const activeObj = canvas.getActiveObject()
-      const activeObjs = canvas.getActiveObjects() // individual objects (unwraps ActiveSelection)
+      const activeObjs = canvas.getActiveObjects()
 
       let finalSelected
-      // Check if the right-clicked target is the ActiveSelection itself OR one of its members
       const isInsideMultiSelect =
         activeObjs.length > 1 &&
         (target === activeObj || activeObjs.includes(target))
 
       if (isInsideMultiSelect) {
-        // Preserve the full multi-selection
         finalSelected = [...activeObjs]
       } else {
-        // Select only the right-clicked object
         canvas.discardActiveObject()
         canvas.setActiveObject(target)
         canvas.renderAll()
@@ -702,9 +696,57 @@ const Whiteboard = ({
     container.addEventListener('pointercancel', stopPan,          { passive: true })
     // ──────────────────────────────────────────────────────────────────────
 
+    // Capture the desktop (home) size once at mount. Never overwrite.
+    const homeW = container.clientWidth
+    const homeH = container.clientHeight
+
     const resizeObserver = new ResizeObserver((entries) => {
       for (const { contentRect: { width, height } } of entries) {
-        canvas.setDimensions({ width, height }); canvas.renderAll()
+        if (width === 0 || height === 0) continue
+
+        canvas.setDimensions({ width, height })
+
+        const objs = canvas.getObjects()
+
+        if (objs.length === 0) {
+          // Nothing to show — just use identity
+          canvas.setViewportTransform([1, 0, 0, 1, 0, 0])
+          canvas.renderAll()
+          continue
+        }
+
+        // ── Measure object bounds in TRUE canvas coordinates ──────────────
+        // We must reset the viewport to identity first so getBoundingRect
+        // returns raw canvas coords, not screen-pixel coords.
+        canvas.setViewportTransform([1, 0, 0, 1, 0, 0])
+
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+        objs.forEach(obj => {
+          obj.setCoords()
+          const br = obj.getBoundingRect(true, true)
+          minX = Math.min(minX, br.left)
+          minY = Math.min(minY, br.top)
+          maxX = Math.max(maxX, br.left + br.width)
+          maxY = Math.max(maxY, br.top  + br.height)
+        })
+
+        const isFullSize = width >= homeW - 2 && height >= homeH - 2
+
+        if (isFullSize) {
+          // Back to desktop — identity viewport, objects at their original positions
+          canvas.setViewportTransform([1, 0, 0, 1, 0, 0])
+        } else {
+          // Smaller screen — zoom-to-fit all objects centred with padding
+          const padding = 32
+          const contentW = maxX - minX + padding * 2
+          const contentH = maxY - minY + padding * 2
+          const zoom = Math.min(width / contentW, height / contentH, 1)
+          const panX = (width  - (maxX + minX) * zoom) / 2
+          const panY = (height - (maxY + minY) * zoom) / 2
+          canvas.setViewportTransform([zoom, 0, 0, zoom, panX, panY])
+        }
+
+        canvas.renderAll()
       }
     })
     resizeObserver.observe(container)
@@ -726,13 +768,6 @@ const Whiteboard = ({
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Context menu items ────────────────────────────────────────────────────
-  // Group/Ungroup logic:
-  //   - "Group Selected" appears ONLY when the user has explicitly selected 2+ objects
-  //     (via drag-select or Shift+click). Spatial containment is NEVER considered.
-  //   - "Ungroup" appears ONLY when a single fabric.Group is right-clicked.
-  //   - Sticky notes (rect+text pairs) are excluded from grouping to preserve their
-  //     internal binding logic.
-  // ─────────────────────────────────────────────────────────────────────────
   const ctxItems = useCallback((target, selectedObjects) => {
     const c = fabricRef.current
     if (!c || !target) return []
@@ -752,8 +787,6 @@ const Whiteboard = ({
 
     const items = []
 
-    // ── Group Selected — only for explicit multi-selections ────────────────
-    // Filter out sticky note components (they manage their own internal binding)
     const groupableObjs = (selectedObjects || []).filter(
       o => !o.stickyRect && !o.stickyText
     )
@@ -763,10 +796,8 @@ const Whiteboard = ({
         label: 'Group Selected',
         icon: 'group',
         action: () => {
-          // Re-read the live selection at action time (avoids stale closure)
           const liveObjs = c.getActiveObjects().filter(o => !o.stickyRect && !o.stickyText)
           const toGroup = liveObjs.length >= 2 ? liveObjs : groupableObjs
-
           c.discardActiveObject()
           const sel = new fabric.ActiveSelection(toGroup, { canvas: c })
           c.setActiveObject(sel)
@@ -780,7 +811,6 @@ const Whiteboard = ({
       })
     }
 
-    // ── Ungroup — only when a single Group is right-clicked ────────────────
     if (target.type === 'group' && (selectedObjects || []).length === 1) {
       items.push({
         label: 'Ungroup',
@@ -789,8 +819,6 @@ const Whiteboard = ({
           c.setActiveObject(target)
           const activeGroup = c.getActiveObject()
           if (!activeGroup || activeGroup.type !== 'group') return
-
-          // toActiveSelection() disperses the group back to individual objects
           const ungrouped = activeGroup.toActiveSelection()
           ungrouped.getObjects().forEach(o => {
             o.set({ selectable: true, evented: true })
@@ -803,10 +831,8 @@ const Whiteboard = ({
       })
     }
 
-    // Add divider before z-order / duplicate / delete if we added group actions
     if (items.length > 0) items.push({ divider: true })
 
-    // ── Standard items ─────────────────────────────────────────────────────
     items.push(
       { label: 'Bring Forward', icon: 'forward', action: () => reorderAndSnap(() => c.bringForward(target)) },
       { label: 'Send Backward', icon: 'backward', action: () => reorderAndSnap(() => c.sendBackwards(target)) },
@@ -830,7 +856,6 @@ const Whiteboard = ({
       {
         label: 'Delete', icon: 'delete', danger: true,
         action: () => {
-          // Delete ALL explicitly selected objects, not just the right-clicked one
           const toDelete = selectedObjects && selectedObjects.length > 1
             ? selectedObjects
             : [target]
@@ -902,14 +927,12 @@ const Whiteboard = ({
         canvas.moveCursor = 'move'
         setCursorAll('default')
         break
-
       case 'pan':
         canvas.selection = false
         canvas.forEachObject(disableAll)
         canvas.moveCursor = 'grabbing'
         setCursorAll('grab')
         break
-
       case 'pen':
         canvas.selection = false
         canvas.forEachObject(disableAll)
@@ -920,7 +943,6 @@ const Whiteboard = ({
         canvas.freeDrawingBrush.decimate = 2
         setCursorAll('crosshair')
         break
-
       case 'eraser':
         canvas.selection = false
         canvas.forEachObject(disableAll)
@@ -930,7 +952,6 @@ const Whiteboard = ({
         canvas.freeDrawingBrush.width = strokeWidth * 5
         setCursorAll('crosshair')
         break
-
       case 'highlighter': {
         canvas.selection = false
         canvas.forEachObject(disableAll)
@@ -941,7 +962,6 @@ const Whiteboard = ({
         setCursorAll('crosshair')
         break
       }
-
       case 'laser':
       case 'frame':
         canvas.isDrawingMode = false
@@ -949,21 +969,18 @@ const Whiteboard = ({
         canvas.forEachObject(disableAll)
         setCursorAll('crosshair')
         break
-
       case 'text':
         canvas.isDrawingMode = false
         canvas.selection = false
         canvas.forEachObject(disableAll)
         setCursorAll('text')
         break
-
       case 'sticky':
         canvas.isDrawingMode = false
         canvas.selection = false
         canvas.forEachObject(disableAll)
         setCursorAll('crosshair')
         break
-
       default:
         canvas.selection = false
         canvas.forEachObject(disableAll)
@@ -1025,19 +1042,10 @@ const Whiteboard = ({
       switch (currentTool) {
         case 'line':
           shape = new fabric.Line([ptr.x, ptr.y, ptr.x, ptr.y], {
-            stroke: c,
-            strokeWidth: sw,
-            selectable: false,
-            evented: false,
-            strokeLineCap: 'round',
-            objectCaching: true,
-            padding: 10,
-            perPixelTargetFind: true,
-            hasBorders: false,
-            hasControls: false,
-            lockScalingX: true,
-            lockScalingY: true,
-            lockRotation: true,
+            stroke: c, strokeWidth: sw, selectable: false, evented: false,
+            strokeLineCap: 'round', objectCaching: true, padding: 10,
+            perPixelTargetFind: true, hasBorders: false, hasControls: false,
+            lockScalingX: true, lockScalingY: true, lockRotation: true,
           })
           break
         case 'rectangle':
@@ -1070,7 +1078,6 @@ const Whiteboard = ({
           shape = new fabric.Polygon(pts, { ...base, left: ptr.x, top: ptr.y })
           break
         }
-
         case 'text': {
           const PLACEHOLDER = 'Type here…'
           const t = new fabric.Textbox('', {
@@ -1082,35 +1089,20 @@ const Whiteboard = ({
           })
           t.isPlaceholder = true
           t.placeholderText = PLACEHOLDER
-
           t.on('editing:entered', function () { canvas.renderAll() })
-          t.on('editing:exited', function () {
-            this.isPlaceholder = (this.text.trim() === '')
-            canvas.renderAll()
-          })
-          t.on('changed', function () {
-            this.isPlaceholder = (this.text.trim() === '')
-            canvas.renderAll()
-          })
-
+          t.on('editing:exited', function () { this.isPlaceholder = (this.text.trim() === ''); canvas.renderAll() })
+          t.on('changed', function () { this.isPlaceholder = (this.text.trim() === ''); canvas.renderAll() })
           canvas.add(t)
           canvas.setActiveObject(t)
           t.enterEditing()
           canvas.renderAll()
-
           const canvasEl2 = canvas.upperCanvasEl || canvas.lowerCanvasEl
           if (canvasEl2) {
             const canvasRect2 = canvasEl2.getBoundingClientRect()
             const br = t.getBoundingRect(true, true)
-            setTextBarPosition({
-              left: canvasRect2.left + br.left,
-              top:  canvasRect2.top  + br.top,
-              width:  br.width,
-              height: br.height,
-            })
+            setTextBarPosition({ left: canvasRect2.left + br.left, top: canvasRect2.top + br.top, width: br.width, height: br.height })
           }
           setShowTextBar(true)
-
           canvas.defaultCursor = 'default'
           canvas.hoverCursor = 'move'
           canvas.moveCursor = 'move'
@@ -1120,7 +1112,6 @@ const Whiteboard = ({
           setTool('select')
           return
         }
-
         case 'sticky': {
           const W = 300
           const rect = new fabric.Rect({
@@ -1131,33 +1122,26 @@ const Whiteboard = ({
             selectable: true, evented: true,
           })
           const txt = new fabric.Textbox('', {
-            left: ptr.x + 16, top: ptr.y + 16,
-            width: W - 32,
+            left: ptr.x + 16, top: ptr.y + 16, width: W - 32,
             fontSize: 16, fontFamily: "'DM Sans',sans-serif",
             fill: '#333', textAlign: 'left',
             editable: true, selectable: true, evented: true,
             hasControls: false, hasBorders: false,
           })
-
           txt.isPlaceholder = true
           txt.placeholderText = 'Note…'
-
           rect.stickyText = txt
           txt.stickyRect = rect
-
-          rect.on('moving',  function () { this.stickyText?.set({ left: this.left + 16, top: this.top + 16 }); this.stickyText?.setCoords() })
-          rect.on('scaling', function () { this.stickyText?.set({ left: this.left + 16, top: this.top + 16 }); this.stickyText?.setCoords() })
-          rect.on('rotating',function () { this.stickyText?.set({ left: this.left + 16, top: this.top + 16 }); this.stickyText?.setCoords() })
-
+          rect.on('moving',   function () { this.stickyText?.set({ left: this.left + 16, top: this.top + 16 }); this.stickyText?.setCoords() })
+          rect.on('scaling',  function () { this.stickyText?.set({ left: this.left + 16, top: this.top + 16 }); this.stickyText?.setCoords() })
+          rect.on('rotating', function () { this.stickyText?.set({ left: this.left + 16, top: this.top + 16 }); this.stickyText?.setCoords() })
           txt.on('editing:entered', function () { canvas.renderAll() })
           txt.on('editing:exited',  function () { this.isPlaceholder = (this.text.trim() === ''); canvas.renderAll() })
           txt.on('changed',         function () { this.isPlaceholder = (this.text.trim() === ''); canvas.renderAll() })
-
           canvas.add(rect)
           canvas.add(txt)
           canvas.setActiveObject(txt)
           setTimeout(() => { txt.enterEditing() }, 100)
-
           canvas.defaultCursor = 'default'
           canvas.hoverCursor = 'move'
           canvas.moveCursor = 'move'
@@ -1168,7 +1152,6 @@ const Whiteboard = ({
           setTool('select')
           return
         }
-
         default: break
       }
       if (shape) { currentShapeRef.current = shape; canvas.add(shape) }
@@ -1229,26 +1212,16 @@ const Whiteboard = ({
             perPixelTargetFind: true, hasBorders: false,
             lockScalingX: true, lockScalingY: true, lockRotation: true,
           })
-
-          obj._originalX1 = obj.x1
-          obj._originalY1 = obj.y1
-          obj._originalX2 = obj.x2
-          obj._originalY2 = obj.y2
-          obj._lastLeft = obj.left
-          obj._lastTop = obj.top
-
+          obj._originalX1 = obj.x1; obj._originalY1 = obj.y1
+          obj._originalX2 = obj.x2; obj._originalY2 = obj.y2
+          obj._lastLeft = obj.left; obj._lastTop = obj.top
           obj.on('moving', function() {
             const dx = this.left - (this._lastLeft || this.left)
             const dy = this.top - (this._lastTop || this.top)
-            this.set({
-              x1: this.x1 + dx, y1: this.y1 + dy,
-              x2: this.x2 + dx, y2: this.y2 + dy,
-            })
-            this._lastLeft = this.left
-            this._lastTop = this.top
+            this.set({ x1: this.x1 + dx, y1: this.y1 + dy, x2: this.x2 + dx, y2: this.y2 + dy })
+            this._lastLeft = this.left; this._lastTop = this.top
             this.setCoords()
           })
-
           applyLineControls(obj)
           obj.setCoords()
         } else {
@@ -1300,19 +1273,12 @@ const Whiteboard = ({
       fontStyle: next.italic ? 'italic' : 'normal',
     })
     canvas.renderAll()
-
     const canvasEl = fabricRef.current?.upperCanvasEl || fabricRef.current?.lowerCanvasEl
     if (canvasEl) {
       const canvasRect = canvasEl.getBoundingClientRect()
       const br = obj.getBoundingRect(true, true)
-      setTextBarPosition({
-        left: canvasRect.left + br.left,
-        top:  canvasRect.top  + br.top,
-        width:  br.width,
-        height: br.height,
-      })
+      setTextBarPosition({ left: canvasRect.left + br.left, top: canvasRect.top + br.top, width: br.width, height: br.height })
     }
-
     setTextFormat(next)
     serializeCanvas(canvas)
     pushSnapshot()
@@ -1338,10 +1304,7 @@ const Whiteboard = ({
           window._clipboard.clone(cl => {
             c.discardActiveObject()
             cl.set({ left: cl.left + 10, top: cl.top + 10, evented: true })
-            if (cl.type === 'line') {
-              cl.set({ perPixelTargetFind: true, hasBorders: false })
-              applyLineControls(cl)
-            }
+            if (cl.type === 'line') { cl.set({ perPixelTargetFind: true, hasBorders: false }); applyLineControls(cl) }
             if (cl.type === 'activeSelection') { cl.canvas = c; cl.forEachObject(o => c.add(o)); cl.setCoords() } else { c.add(cl) }
             window._clipboard.top += 10; window._clipboard.left += 10
             c.setActiveObject(cl); c.requestRenderAll()

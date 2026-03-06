@@ -88,13 +88,9 @@ const Toolbar = ({
       const rect = shapesBtnRef.current.getBoundingClientRect()
       const menuWidth = 164 // min-width of shapes menu
       let left = rect.left
-      
-      // Prevent overflow on right side
       if (left + menuWidth > window.innerWidth) {
         left = window.innerWidth - menuWidth - 10
       }
-      
-      // Prevent overflow on left side
       if (left < 10) {
         left = 10
       }
@@ -111,13 +107,9 @@ const Toolbar = ({
       const rect = colorBtnRef.current.getBoundingClientRect()
       const paletteWidth = 160 // min-width of color palette
       let left = rect.left + rect.width / 2
-      
-      // Prevent overflow on right side
       if (left + paletteWidth / 2 > window.innerWidth) {
         left = window.innerWidth - paletteWidth / 2 - 10
       }
-      
-      // Prevent overflow on left side
       if (left - paletteWidth / 2 < 10) {
         left = paletteWidth / 2 + 10
       }
