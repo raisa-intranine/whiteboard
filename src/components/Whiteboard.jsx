@@ -4,7 +4,7 @@ import ShapeProperties from './ShapeProperties'
 import LaserPointer from './Laserpointer'
 import './Whiteboard.css'
 import { loadBoard, saveBoard } from '../services/api'
-import { initRealtime, publishDelta, disconnectRealtime } from '../services/realtime'
+import { initRealtime, publishDelta, publishClear, disconnectRealtime } from '../services/realtime'
 
 const SHAPE_TYPES = ['rect', 'circle', 'triangle', 'polygon', 'ellipse', 'group', 'i-text', 'textbox', 'image']
 const FONTS = ['DM Sans', 'Arial', 'Georgia', 'Courier New', 'Verdana', 'Times New Roman', 'Trebuchet MS']
@@ -31,7 +31,7 @@ const resolveBoardId = () => {
   const params = new URLSearchParams(window.location.search)
   const sharedBoardId = params.get('board')
   if (sharedBoardId) return sharedBoardId
-  
+
   // Fall back to user's own board
   try {
     const session = JSON.parse(localStorage.getItem('wb_session_v1'))
@@ -460,7 +460,7 @@ const Whiteboard = ({
     const canvas = fabricRef.current
     if (!canvas) return
     isMutingRef.current = true
-    canvas.getObjects().forEach(obj => {
+    canvas.getObjects().slice().forEach(obj => {
       if (obj.stickyText) canvas.remove(obj.stickyText)
       if (obj.stickyRect) canvas.remove(obj.stickyRect)
       canvas.remove(obj)
@@ -469,6 +469,13 @@ const Whiteboard = ({
     canvas.discardActiveObject()
     canvas.fire('object:modified')
     canvas.renderAll()
+    // Broadcast clear to all collaborators
+    const boardId = resolveBoardId()
+    if (boardId) {
+      publishClear({ type: 'canvas:clear', background: canvas.backgroundColor || '#ffffff' })
+    }
+    // Also save the cleared state to DB
+    serializeCanvas(canvas)
   }, [])
 
   const deleteSelected = useCallback(() => {
@@ -580,15 +587,27 @@ const Whiteboard = ({
     const boardId = resolveBoardId()
     if (boardId) {
       initRealtime(boardId, (msg) => {
-        // Received a drawing delta from another collaborator
-        if (!msg || msg.type !== 'canvas:delta' || !msg.payload) return
-        
+        // Received a message from another collaborator
+        if (!msg) return
+
+        // Handle clear canvas broadcast
+        if (msg.type === 'canvas:clear') {
+          realtimeIgnoreRef.current = true
+          const bg = msg.background || '#ffffff'
+          canvas.getObjects().slice().forEach(o => canvas.remove(o))
+          canvas.setBackgroundColor(bg, () => canvas.renderAll())
+          realtimeIgnoreRef.current = false
+          return
+        }
+
+        if (msg.type !== 'canvas:delta' || !msg.payload) return
+
         const fabricObject = msg.payload
         realtimeIgnoreRef.current = true
-        
+
         // Find existing object by realtimeId
         const existing = canvas.getObjects().find(o => o.realtimeId === fabricObject.realtimeId)
-        
+
         if (fabricObject._deleted) {
           // Delete the object
           if (existing) {
@@ -610,7 +629,7 @@ const Whiteboard = ({
             }
           })
         }
-        
+
         realtimeIgnoreRef.current = false
       }).catch(err => console.warn('[Whiteboard] Realtime init failed:', err.message))
     }
@@ -648,6 +667,14 @@ const Whiteboard = ({
     canvas.on('path:created', (opt) => {
       if (toolRef.current === 'eraser')
         opt.path.set({ isEraserStroke: true, selectable: false, evented: false })
+      // Path is a free-draw stroke — broadcast it immediately
+      if (!realtimeIgnoreRef.current && boardId && opt.path) {
+        const p = opt.path
+        if (!p.realtimeId) p.realtimeId = `obj_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        const delta = p.toJSON(SERIALIZE_PROPS)
+        delta.realtimeId = p.realtimeId
+        publishDelta({ type: 'canvas:delta', payload: delta })
+      }
     })
 
     const syncTextBar = (obj) => {
@@ -1351,6 +1378,7 @@ const Whiteboard = ({
 
       const wasDrawing = isDrawingRef.current
       isDrawingRef.current = false
+      const finishedShape = currentShapeRef.current
       currentShapeRef.current = null
       startPointRef.current = null
 
@@ -1358,6 +1386,18 @@ const Whiteboard = ({
         canvas.fire('object:modified')
         const t = toolRef.current
         if (t !== 'select' && t !== 'pen' && t !== 'laser') setTool('select')
+
+        // Broadcast the newly-drawn shape to collaborators.
+        // We do this here (instead of relying on object:added/object:modified)
+        // because those events fire while isDrawingRef.current is still true
+        // (the shape is still being stretched) so the onMutation guard blocks them.
+        if (!realtimeIgnoreRef.current && boardId && finishedShape) {
+          const obj = finishedShape
+          if (!obj.realtimeId) obj.realtimeId = `obj_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+          const delta = obj.toJSON(SERIALIZE_PROPS)
+          delta.realtimeId = obj.realtimeId
+          publishDelta({ type: 'canvas:delta', payload: delta })
+        }
       }
     }
 

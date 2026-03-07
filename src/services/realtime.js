@@ -53,6 +53,15 @@ export const publishDelta = (data) => {
 }
 
 /**
+ * Publish a canvas:clear event to all collaborators.
+ * @param {{ type: 'canvas:clear', background: string }} data
+ */
+export const publishClear = (data) => {
+    if (!boardChannel) return
+    boardChannel.publish('canvas:delta', data)
+}
+
+/**
  * Disconnect and clean up the Ably client.
  */
 export const disconnectRealtime = async () => {
