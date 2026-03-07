@@ -435,7 +435,7 @@ const Whiteboard = ({
 
   const pushSnapshot = useCallback(() => {
     const canvas = fabricRef.current
-    if (!canvas || isMutingRef.current) return
+    if (!canvas || isMutingRef.current || realtimeIgnoreRef.current) return
     const json = canvas.toJSON(SERIALIZE_PROPS)
     historyRef.current = historyRef.current.slice(0, historyIdxRef.current + 1)
     historyRef.current.push(json)
@@ -1257,7 +1257,11 @@ const Whiteboard = ({
           t.placeholderText = PLACEHOLDER
           t.on('editing:entered', function () { canvas.renderAll() })
           t.on('editing:exited', function () { this.isPlaceholder = (this.text.trim() === ''); canvas.renderAll() })
-          t.on('changed', function () { this.isPlaceholder = (this.text.trim() === ''); canvas.renderAll() })
+          t.on('changed', function () { 
+            this.isPlaceholder = (this.text.trim() === '')
+            canvas.renderAll()
+            canvas.fire('object:modified', { target: this })
+          })
           canvas.add(t)
           canvas.setActiveObject(t)
           t.enterEditing()
@@ -1303,7 +1307,11 @@ const Whiteboard = ({
           rect.on('rotating', function () { this.stickyText?.set({ left: this.left + 16, top: this.top + 16 }); this.stickyText?.setCoords() })
           txt.on('editing:entered', function () { canvas.renderAll() })
           txt.on('editing:exited', function () { this.isPlaceholder = (this.text.trim() === ''); canvas.renderAll() })
-          txt.on('changed', function () { this.isPlaceholder = (this.text.trim() === ''); canvas.renderAll() })
+          txt.on('changed', function () { 
+            this.isPlaceholder = (this.text.trim() === '')
+            canvas.renderAll()
+            canvas.fire('object:modified', { target: this })
+          })
           canvas.add(rect)
           canvas.add(txt)
           canvas.setActiveObject(txt)
