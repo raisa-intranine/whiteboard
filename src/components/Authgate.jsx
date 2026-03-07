@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
-import { signup, login, getMe, setToken, clearToken, getToken } from '../services/api'
+import { getMe, setToken, clearToken, getToken } from '../services/api'
 import './AuthGate.css'
 
-const SESSION_KEY = 'wb_session_v1' // kept for name/email cache only (no passwords)
+const SESSION_KEY = 'wb_session_v1' // kept for name/email cache only
 
 const getInitials = (name) =>
   name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
@@ -17,26 +17,39 @@ const getAvatarColor = (email) => {
   return AVATAR_COLORS[idx]
 }
 
+const API_BASE = import.meta.env.VITE_API_URL || ''
+
 export default function AuthGate({ children, theme }) {
   const [user, setUser] = useState(null)
-  const [mode, setMode] = useState('login')
-  const [form, setForm] = useState({ name: '', email: '', password: '', confirm: '' })
   const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
-  const [loading, setLoading] = useState(false)
   const [showProfile, setShowProfile] = useState(false)
   const [mounted, setMounted] = useState(false)
   const [bootstrapping, setBootstrapping] = useState(true) // true while re-hydrating session
   const profileRef = useRef(null)
 
-  // ── Re-hydrate session on mount using stored JWT ──────────────────────────
+  // ── Re-hydrate session on mount using token in URL or localStorage ────────
   useEffect(() => {
-    const token = getToken()
-    if (!token) {
+    const params = new URLSearchParams(window.location.search)
+    const urlToken = params.get('token')
+    const urlError = params.get('error')
+
+    if (urlToken) {
+      setToken(urlToken)
+      // Clean up the URL
+      window.history.replaceState({}, document.title, window.location.pathname)
+    } else if (urlError) {
+      setError(`Authentication failed: ${urlError.replace(/_/g, ' ')}`)
+      window.history.replaceState({}, document.title, window.location.pathname)
+    }
+
+    const currentToken = getToken()
+    if (!currentToken) {
       setBootstrapping(false)
       setTimeout(() => setMounted(true), 50)
       return
     }
+
     getMe()
       .then(u => {
         setUser(u)
@@ -61,55 +74,6 @@ export default function AuthGate({ children, theme }) {
     return () => document.removeEventListener('mousedown', handle)
   }, [])
 
-  const field = (key, val) => setForm(f => ({ ...f, [key]: val }))
-
-  // ── Login ─────────────────────────────────────────────────────────────────
-  const handleLogin = async () => {
-    setError('')
-    if (!form.email || !form.password) { setError('Please fill in all fields.'); return }
-    setLoading(true)
-    try {
-      const { token, user: u } = await login({ email: form.email, password: form.password })
-      setToken(token)
-      // Clear previous user's canvas data from localStorage
-      localStorage.removeItem('wb_canvas_v2')
-      localStorage.removeItem('wb_background_v2')
-      localStorage.setItem(SESSION_KEY, JSON.stringify(u))
-      setUser(u)
-    } catch (err) {
-      setError(err.message || 'Login failed. Please try again.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // ── Signup ────────────────────────────────────────────────────────────────
-  const handleSignup = async () => {
-    setError('')
-    if (!form.name.trim()) { setError('Please enter your name.'); return }
-    if (!form.email.includes('@')) { setError('Please enter a valid email.'); return }
-    if (form.password.length < 6) { setError('Password must be at least 6 characters.'); return }
-    if (form.password !== form.confirm) { setError('Passwords do not match.'); return }
-    setLoading(true)
-    try {
-      const { token, user: u } = await signup({
-        name: form.name.trim(),
-        email: form.email,
-        password: form.password,
-      })
-      setToken(token)
-      // Clear previous user's canvas data from localStorage
-      localStorage.removeItem('wb_canvas_v2')
-      localStorage.removeItem('wb_background_v2')
-      localStorage.setItem(SESSION_KEY, JSON.stringify(u))
-      setUser(u)
-    } catch (err) {
-      setError(err.message || 'Sign up failed. Please try again.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
   // ── Logout ────────────────────────────────────────────────────────────────
   const handleLogout = () => {
     clearToken()
@@ -119,8 +83,7 @@ export default function AuthGate({ children, theme }) {
     localStorage.removeItem('wb_background_v2')
     setUser(null)
     setShowProfile(false)
-    setForm({ name: '', email: '', password: '', confirm: '' })
-    setMode('login')
+    setError('')
   }
 
   // ── Share board link ──────────────────────────────────────────────────────
@@ -246,89 +209,23 @@ export default function AuthGate({ children, theme }) {
             </svg>
           </div>
           <h1 className="ag-title">Collaborative<br />Whiteboard</h1>
-          <p className="ag-sub">A shared space for your ideas</p>
+          <p className="ag-sub">Sign in to join the shared space</p>
         </div>
 
-        <div className="ag-tabs">
-          <button className={`ag-tab${mode === 'login' ? ' active' : ''}`} onClick={() => { setMode('login'); setError('') }}>Sign in</button>
-          <button className={`ag-tab${mode === 'signup' ? ' active' : ''}`} onClick={() => { setMode('signup'); setError('') }}>Sign up</button>
-          <div className={`ag-tab-indicator ${mode}`} />
-        </div>
+        <div className="ag-form" style={{ marginTop: '24px' }}>
 
-        <div className="ag-form">
-          {mode === 'signup' && (
-            <div className="ag-field ag-field--animate">
-              <label className="ag-label">Full name</label>
-              <input
-                className="ag-input"
-                type="text"
-                placeholder="Your name"
-                value={form.name}
-                onChange={e => field('name', e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSignup()}
-                autoFocus
-              />
-            </div>
-          )}
-
-          <div className="ag-field">
-            <label className="ag-label">Email</label>
-            <input
-              className="ag-input"
-              type="email"
-              placeholder="you@example.com"
-              value={form.email}
-              onChange={e => field('email', e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && (mode === 'login' ? handleLogin() : handleSignup())}
-              autoFocus={mode === 'login'}
-            />
-          </div>
-
-          <div className="ag-field">
-            <label className="ag-label">Password</label>
-            <input
-              className="ag-input"
-              type="password"
-              placeholder={mode === 'signup' ? 'At least 6 characters' : 'Your password'}
-              value={form.password}
-              onChange={e => field('password', e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && (mode === 'login' ? handleLogin() : handleSignup())}
-            />
-          </div>
-
-          {mode === 'signup' && (
-            <div className="ag-field ag-field--animate">
-              <label className="ag-label">Confirm password</label>
-              <input
-                className="ag-input"
-                type="password"
-                placeholder="Repeat your password"
-                value={form.confirm}
-                onChange={e => field('confirm', e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSignup()}
-              />
-            </div>
-          )}
+          <a href={`${API_BASE}/api/auth/google`} className="ag-oauth-btn ag-oauth-google" style={{ textDecoration: 'none' }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
+              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
+              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
+              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
+            </svg>
+            Sign in with Google
+          </a>
 
           {error && <div className="ag-error">{error}</div>}
-
-          <button
-            className={`ag-submit${loading ? ' ag-submit--loading' : ''}`}
-            onClick={mode === 'login' ? handleLogin : handleSignup}
-            disabled={loading}
-          >
-            {loading ? (
-              <span className="ag-spinner" />
-            ) : mode === 'login' ? 'Sign in' : 'Create account'}
-          </button>
         </div>
-
-        <p className="ag-switch">
-          {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
-          <button onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError('') }}>
-            {mode === 'login' ? 'Sign up' : 'Sign in'}
-          </button>
-        </p>
       </div>
     </div>
   )

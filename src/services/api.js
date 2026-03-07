@@ -49,20 +49,6 @@ const request = async (method, path, body) => {
 // ── Auth API ─────────────────────────────────────────────────────────────────
 
 /**
- * Sign up a new user.
- * @param {{ name: string, email: string, password: string }} body
- * @returns {{ token: string, user: object }}
- */
-export const signup = (body) => request('POST', '/api/auth/signup', body)
-
-/**
- * Log in an existing user.
- * @param {{ email: string, password: string }} body
- * @returns {{ token: string, user: object }}
- */
-export const login = (body) => request('POST', '/api/auth/login', body)
-
-/**
  * Get the currently authenticated user (validates stored token).
  * @returns {{ id: string, name: string, email: string, boardId: string }}
  */

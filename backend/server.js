@@ -15,8 +15,7 @@ app.use(cors({
 app.use(express.json())
 
 // Import route handlers
-const { signup } = require('./api/auth/signup')
-const { login } = require('./api/auth/login')
+const { googleAuth, googleCallback } = require('./api/auth/google')
 const { me } = require('./api/auth/me')
 const { getBoards, createBoard } = require('./api/boards/index')
 const { getBoard, updateBoard, deleteBoard } = require('./api/boards/[boardId]')
@@ -28,8 +27,8 @@ app.get('/', (req, res) => {
 })
 
 // Auth routes
-app.post('/api/auth/signup', signup)
-app.post('/api/auth/login', login)
+app.get('/api/auth/google', googleAuth)
+app.get('/api/auth/google/callback', googleCallback)
 app.get('/api/auth/me', me)
 
 // Board routes

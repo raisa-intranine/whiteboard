@@ -48,7 +48,7 @@ const serializeCanvas = (canvas) => {
   try {
     const json = canvas.toJSON(SERIALIZE_PROPS)
     const boardId = resolveBoardId()
-    
+
     if (boardId) {
       // Save to Neon database
       saveToBoardApi(boardId, json, canvas.backgroundColor || '#ffffff')
@@ -107,6 +107,10 @@ const deserializeCanvas = (canvas, onDone) => {
   // Load from Neon database
   loadBoard(boardId)
     .then(({ canvasJson, background }) => {
+      if (!canvas.lowerCanvasEl) {
+        onDone()
+        return
+      }
       if (background) canvas.setBackgroundColor(background, () => { })
       if (canvasJson && canvasJson.objects) {
         loadJsonIntoCanvas(canvas, canvasJson, onDone)
@@ -971,7 +975,7 @@ const Whiteboard = ({
     canvas.setBackgroundColor(canvasBackground || '#ffffff', () => {
       canvas.getObjects().forEach(obj => { if (obj.isEraserStroke) obj.set('stroke', canvasBackground) })
       canvas.renderAll()
-      localStorage.setItem(STORAGE_BG, canvasBackground)
+      localStorage.setItem('wb_background_v2', canvasBackground)
       serializeCanvas(canvas)
     })
   }, [canvasBackground])
