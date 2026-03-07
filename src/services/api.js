@@ -74,6 +74,10 @@ export const saveBoard = (boardId, body) => request('PUT', `/api/boards/${boardI
 
 /**
  * Get an Ably token request for the authenticated user's board channel.
+ * @param {string} boardId - Optional boardId to join a specific board
  * @returns {{ tokenRequest: object }}
  */
-export const getRealtimeToken = () => request('GET', '/api/realtime/token')
+export const getRealtimeToken = (boardId) => {
+    const path = boardId ? `/api/realtime/token?boardId=${boardId}` : '/api/realtime/token'
+    return request('GET', path)
+}

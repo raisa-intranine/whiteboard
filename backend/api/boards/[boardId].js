@@ -50,10 +50,8 @@ const updateBoard = async (req, res) => {
         return res.status(err.status || 401).json({ error: err.message })
     }
 
-    // Verify the authenticated user owns this board
-    if (payload.boardId !== boardId) {
-        return res.status(403).json({ error: 'You do not have permission to save this board' })
-    }
+    // Allow any authenticated user to save to any board (collaborative editing)
+    // This enables real-time collaboration where multiple users can edit the same board
 
     const { canvasJson, background } = req.body || {}
 

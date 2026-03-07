@@ -21,7 +21,7 @@ export const initRealtime = async (boardId, onMessage) => {
     realtimeClient = new AblyLib.Realtime({
         authCallback: async (_tokenParams, callback) => {
             try {
-                const { tokenRequest } = await getRealtimeToken()
+                const { tokenRequest } = await getRealtimeToken(boardId)
                 callback(null, tokenRequest)
             } catch (err) {
                 callback(err, null)
