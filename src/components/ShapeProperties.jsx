@@ -78,8 +78,6 @@ const ShapeProperties = ({ canvas, selectedObject }) => {
     selectedObject.set(props)
     selectedObject.setCoords()
     canvas.renderAll()
-    // Trigger object:modified event to sync with collaborators
-    canvas.fire('object:modified', { target: selectedObject })
   }
 
   const handleStrokeColor  = (c) => { setStrokeColor(c);  apply({ stroke: c }) }
