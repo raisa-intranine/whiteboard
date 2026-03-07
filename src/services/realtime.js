@@ -11,7 +11,7 @@ let myClientId = null
 /**
  * Initialize the Ably client and subscribe to a board channel.
  * @param {string} boardId
- * @param {(msg: { type: string, payload: object, userId: string }) => void} onMessage
+ * @param {(msg: any) => void} onMessage
  */
 export const initRealtime = async (boardId, onMessage) => {
     // If already connected to this board, skip
@@ -28,30 +28,30 @@ export const initRealtime = async (boardId, onMessage) => {
                 callback(err, null)
             }
         },
-        echoMessages: true, // receive our own messages to handle multi-tab scenarios
+        echoMessages: false, // don't receive our own messages
     })
 
     boardChannel = realtimeClient.channels.get(`board:${boardId}`)
 
-    // Track our own clientId so we can filter self-messages
+    // Track our own clientId
     realtimeClient.connection.on('connected', () => {
         myClientId = realtimeClient.auth.clientId
+        console.log('[Realtime] Connected with clientId:', myClientId)
     })
 
+    // Subscribe to all canvas events
     boardChannel.subscribe((msg) => {
-        // Filter out our own messages to prevent echo
-        if (msg.clientId === myClientId) return
         if (typeof onMessage === 'function') onMessage(msg.data)
     })
 }
 
 /**
- * Publish a canvas delta (a single modified fabric.js object) to all collaborators.
- * @param {{ type: string, payload: object }} data
+ * Publish full canvas state to all collaborators.
+ * @param {{ type: 'canvas:full', canvasJson: object, background: string }} data
  */
-export const publishDelta = (data) => {
+export const publishFullCanvas = (data) => {
     if (!boardChannel) return
-    boardChannel.publish('canvas:event', data)
+    boardChannel.publish('canvas:sync', data)
 }
 
 /**
@@ -60,8 +60,13 @@ export const publishDelta = (data) => {
  */
 export const publishClear = (data) => {
     if (!boardChannel) return
-    boardChannel.publish('canvas:event', data)
+    boardChannel.publish('canvas:sync', data)
 }
+
+/**
+ * Get the current client ID
+ */
+export const getClientId = () => myClientId
 
 /**
  * Disconnect and clean up the Ably client.
@@ -75,4 +80,6 @@ export const disconnectRealtime = async () => {
         realtimeClient.close()
         realtimeClient = null
     }
+    myClientId = null
 }
+

@@ -4,7 +4,7 @@ import ShapeProperties from './ShapeProperties'
 import LaserPointer from './Laserpointer'
 import './Whiteboard.css'
 import { loadBoard, saveBoard } from '../services/api'
-import { initRealtime, publishDelta, publishClear, disconnectRealtime } from '../services/realtime'
+import { initRealtime, publishFullCanvas, publishClear, disconnectRealtime } from '../services/realtime'
 
 const SHAPE_TYPES = ['rect', 'circle', 'triangle', 'polygon', 'ellipse', 'group', 'i-text', 'textbox', 'image']
 const FONTS = ['DM Sans', 'Arial', 'Georgia', 'Courier New', 'Verdana', 'Times New Roman', 'Trebuchet MS']
@@ -13,7 +13,7 @@ const SERIALIZE_PROPS = [
   'stickyText', 'stickyRect', 'selectable', 'evented',
   'perPixelTargetFind', 'strokeUniform', 'hasControls', 'hasBorders',
   'shadow', 'rx', 'ry', 'isEraserStroke', 'isFrame', 'src', 'crossOrigin',
-  'isPlaceholder', 'placeholderText', 'realtimeId',
+  'isPlaceholder', 'placeholderText',
 ]
 
 // Debounce helper for throttling backend saves
@@ -22,6 +22,28 @@ const debounce = (fn, ms) => {
   return (...args) => {
     clearTimeout(timer)
     timer = setTimeout(() => fn(...args), ms)
+  }
+}
+
+// Throttle helper for real-time sync (different from debounce - fires at intervals)
+const throttle = (fn, ms) => {
+  let lastCall = 0
+  let timer = null
+  return (...args) => {
+    const now = Date.now()
+    const timeSinceLastCall = now - lastCall
+    
+    clearTimeout(timer)
+    
+    if (timeSinceLastCall >= ms) {
+      lastCall = now
+      fn(...args)
+    } else {
+      timer = setTimeout(() => {
+        lastCall = Date.now()
+        fn(...args)
+      }, ms - timeSinceLastCall)
+    }
   }
 }
 
@@ -585,14 +607,28 @@ const Whiteboard = ({
 
     // ── Initialize Ably realtime collaboration ────────────────────────────
     const boardId = resolveBoardId()
+    
+    // Throttled function to broadcast full canvas state
+    const broadcastCanvas = throttle(() => {
+      if (!boardId || realtimeIgnoreRef.current) return
+      const canvasJson = canvas.toJSON(SERIALIZE_PROPS)
+      const background = canvas.backgroundColor || '#ffffff'
+      publishFullCanvas({
+        type: 'canvas:full',
+        canvasJson,
+        background
+      })
+    }, 500) // Throttle to 500ms
+
     if (boardId) {
       initRealtime(boardId, (msg) => {
         // Received a message from another collaborator
         if (!msg) return
 
+        realtimeIgnoreRef.current = true
+
         // Handle clear canvas broadcast
         if (msg.type === 'canvas:clear') {
-          realtimeIgnoreRef.current = true
           const bg = msg.background || '#ffffff'
           canvas.getObjects().slice().forEach(o => canvas.remove(o))
           canvas.setBackgroundColor(bg, () => canvas.renderAll())
@@ -600,34 +636,44 @@ const Whiteboard = ({
           return
         }
 
-        if (msg.type !== 'canvas:delta' || !msg.payload) return
-
-        const fabricObject = msg.payload
-        realtimeIgnoreRef.current = true
-
-        // Find existing object by realtimeId
-        const existing = canvas.getObjects().find(o => o.realtimeId === fabricObject.realtimeId)
-
-        if (fabricObject._deleted) {
-          // Delete the object
-          if (existing) {
-            canvas.remove(existing)
-            canvas.renderAll()
-          }
-        } else if (existing) {
-          // Update existing object
-          existing.set(fabricObject)
-          existing.setCoords()
-          canvas.renderAll()
-        } else {
-          // Add new object
-          fabric.util.enlivenObjects([fabricObject], ([obj]) => {
-            if (obj) {
-              obj.realtimeId = fabricObject.realtimeId
-              canvas.add(obj)
-              canvas.renderAll()
+        // Handle full canvas sync
+        if (msg.type === 'canvas:full' && msg.canvasJson) {
+          canvas.loadFromJSON(msg.canvasJson, () => {
+            if (msg.background) {
+              canvas.setBackgroundColor(msg.background, () => {})
             }
+            // Restore object properties
+            canvas.getObjects().forEach(obj => {
+              obj.set({ selectable: true, evented: true, objectCaching: true, padding: 10 })
+              if (obj.isEraserStroke) obj.set({ selectable: false, evented: false })
+              if (obj.type === 'line') {
+                obj.set({ perPixelTargetFind: true, hasBorders: false })
+                applyLineControls(obj)
+              }
+              // Restore sticky note relationships
+              if (obj.stickyText) {
+                const txt = canvas.getObjects().find(o => o === obj.stickyText)
+                if (txt) {
+                  obj.on('moving', function () {
+                    this.stickyText?.set({ left: this.left + 16, top: this.top + 16 })
+                    this.stickyText?.setCoords()
+                  })
+                  obj.on('scaling', function () {
+                    this.stickyText?.set({ left: this.left + 16, top: this.top + 16 })
+                    this.stickyText?.setCoords()
+                  })
+                  obj.on('rotating', function () {
+                    this.stickyText?.set({ left: this.left + 16, top: this.top + 16 })
+                    this.stickyText?.setCoords()
+                  })
+                }
+              }
+              obj.setCoords()
+            })
+            canvas.renderAll()
+            realtimeIgnoreRef.current = false
           })
+          return
         }
 
         realtimeIgnoreRef.current = false
@@ -635,46 +681,21 @@ const Whiteboard = ({
     }
 
     // ── Canvas mutation handler: save + broadcast ─────────────────────────
-    const onMutation = (e) => {
+    const onMutation = () => {
       if (isMutingRef.current || isDrawingRef.current || realtimeIgnoreRef.current) return
       serializeCanvas(canvas)
       pushSnapshot()
-      // Broadcast delta to collaborators via Ably
-      if (boardId && e?.target) {
-        const obj = e.target
-        // Assign unique ID if not present
-        if (!obj.realtimeId) obj.realtimeId = `obj_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        const delta = obj.toJSON(SERIALIZE_PROPS)
-        delta.realtimeId = obj.realtimeId
-        publishDelta({ type: 'canvas:delta', payload: delta })
-      }
+      // Broadcast full canvas to collaborators
+      broadcastCanvas()
     }
+    
     canvas.on('object:added', onMutation)
     canvas.on('object:modified', onMutation)
-    canvas.on('object:removed', (e) => {
-      if (isMutingRef.current || isDrawingRef.current || realtimeIgnoreRef.current) return
-      serializeCanvas(canvas)
-      pushSnapshot()
-      // Broadcast deletion
-      if (boardId && e?.target) {
-        const delta = e.target.toJSON(SERIALIZE_PROPS)
-        delta.realtimeId = e.target.realtimeId || `obj_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        delta._deleted = true
-        publishDelta({ type: 'canvas:delta', payload: delta })
-      }
-    })
-
+    canvas.on('object:removed', onMutation)
     canvas.on('path:created', (opt) => {
       if (toolRef.current === 'eraser')
         opt.path.set({ isEraserStroke: true, selectable: false, evented: false })
-      // Path is a free-draw stroke — broadcast it immediately
-      if (!realtimeIgnoreRef.current && boardId && opt.path) {
-        const p = opt.path
-        if (!p.realtimeId) p.realtimeId = `obj_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        const delta = p.toJSON(SERIALIZE_PROPS)
-        delta.realtimeId = p.realtimeId
-        publishDelta({ type: 'canvas:delta', payload: delta })
-      }
+      onMutation()
     })
 
     const syncTextBar = (obj) => {
