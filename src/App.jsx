@@ -7,7 +7,7 @@ import ConfirmDialog from './components/Confirmdialog'
 import './App.css'
 
 function App() {
-  const [tool, setTool] = useState('select')
+  const [tool, setTool] = useState(() => localStorage.getItem('wb_tool') || 'select')
   const getSystemTheme = () => {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
   }
@@ -17,6 +17,11 @@ function App() {
   
   const [themeSetting, setThemeSetting] = useState(() => localStorage.getItem('wb_theme') || 'light')
   const [theme, setThemeState] = useState(() => resolveTheme(localStorage.getItem('wb_theme') || 'light'))
+  
+  // Save tool to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem('wb_tool', tool)
+  }, [tool])
   
   const [color, setColor] = useState(() => {
     const savedTheme = localStorage.getItem('wb_theme') || 'light'

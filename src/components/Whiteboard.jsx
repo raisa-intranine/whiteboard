@@ -914,7 +914,15 @@ const Whiteboard = ({
     })
     resizeObserver.observe(container)
     const onBeforeUnload = () => {
-      serializeCanvas(canvas)
+      // Force immediate save by calling saveBoard directly
+      const boardId = resolveBoardId()
+      if (boardId) {
+        const json = canvas.toJSON(SERIALIZE_PROPS)
+        const background = canvas.backgroundColor || '#ffffff'
+        saveBoard(boardId, { canvasJson: json, background }).catch(err => {
+          console.warn('[Whiteboard] Final save failed:', err)
+        })
+      }
       disconnectRealtime()
     }
     window.addEventListener('beforeunload', onBeforeUnload)
