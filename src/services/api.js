@@ -82,7 +82,7 @@ export const loadBoard = (boardId) => request('GET', `/api/boards/${boardId}`)
  * @param {string} boardId
  * @param {{ canvasJson: object, background: string }} body
  */
-export const saveBoard = (boardId, body) => request('POST', `/api/boards/${boardId}`, body)
+export const saveBoard = (boardId, body) => request('PUT', `/api/boards/${boardId}`, body)
 
 // ── Realtime API ──────────────────────────────────────────────────────────────
 
