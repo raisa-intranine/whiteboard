@@ -6,24 +6,20 @@
 // Returns:  { tokenRequest } — pass this directly to Ably client
 
 const Ably = require('ably')
-const { applyCors, requireAuth, sendError } = require('../../lib/middleware')
+const { requireAuth } = require('../../lib/middleware')
 
-module.exports = async (req, res) => {
-    if (applyCors(req, res)) return
-
-    if (req.method !== 'GET') return sendError(res, 405, 'Method not allowed')
-
+const getRealtimeToken = async (req, res) => {
     let payload
     try {
         payload = requireAuth(req)
     } catch (err) {
-        return sendError(res, err.status || 401, err.message)
+        return res.status(err.status || 401).json({ error: err.message })
     }
 
     const { ABLY_API_KEY } = process.env
     if (!ABLY_API_KEY) {
         console.error('ABLY_API_KEY is not set')
-        return sendError(res, 500, 'Realtime service not configured')
+        return res.status(500).json({ error: 'Realtime service not configured' })
     }
 
     try {
@@ -46,6 +42,8 @@ module.exports = async (req, res) => {
         return res.status(200).json({ tokenRequest })
     } catch (err) {
         console.error('[realtime/token]', err)
-        return sendError(res, 500, 'Failed to create realtime token')
+        return res.status(500).json({ error: 'Failed to create realtime token' })
     }
 }
+
+module.exports = { getRealtimeToken }

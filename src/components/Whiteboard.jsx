@@ -7,8 +7,6 @@ import { loadBoard, saveBoard } from '../services/api'
 import { initRealtime, publishDelta, disconnectRealtime } from '../services/realtime'
 
 const SHAPE_TYPES = ['rect', 'circle', 'triangle', 'polygon', 'ellipse', 'group', 'i-text', 'textbox', 'image']
-const STORAGE_KEY = 'wb_canvas_v2'   // kept as localStorage fallback
-const STORAGE_BG = 'wb_background_v2'
 const FONTS = ['DM Sans', 'Arial', 'Georgia', 'Courier New', 'Verdana', 'Times New Roman', 'Trebuchet MS']
 
 const SERIALIZE_PROPS = [
@@ -27,11 +25,8 @@ const debounce = (fn, ms) => {
   }
 }
 
-// Resolve the boardId: from ?board= URL param, or from stored session
+// Resolve the boardId from stored session (all users are authenticated)
 const resolveBoardId = () => {
-  const params = new URLSearchParams(window.location.search)
-  const boardParam = params.get('board')
-  if (boardParam) return boardParam
   try {
     const session = JSON.parse(localStorage.getItem('wb_session_v1'))
     return session?.boardId || null
@@ -40,11 +35,7 @@ const resolveBoardId = () => {
   }
 }
 
-// Container-drag helpers removed intentionally.
-// Objects should only move together when explicitly grouped by the user.
-
-// Write canvas to localStorage (always, as an offline fallback),
-// and debounce-save to the backend when a boardId is available.
+// Save canvas to Neon database only
 const saveToBoardApi = debounce(async (boardId, canvasJson, background) => {
   try {
     await saveBoard(boardId, { canvasJson, background })
@@ -56,14 +47,14 @@ const saveToBoardApi = debounce(async (boardId, canvasJson, background) => {
 const serializeCanvas = (canvas) => {
   try {
     const json = canvas.toJSON(SERIALIZE_PROPS)
-    const str = JSON.stringify(json)
-    if (!str || str.length <= 10) return
-    // Always keep a local copy so the app works offline / without a token
-    localStorage.setItem(STORAGE_KEY, str)
-    localStorage.setItem(STORAGE_BG, canvas.backgroundColor || '#ffffff')
-    // Also push to the backend (debounced)
     const boardId = resolveBoardId()
-    if (boardId) saveToBoardApi(boardId, json, canvas.backgroundColor || '#ffffff')
+    
+    if (boardId) {
+      // Save to Neon database
+      saveToBoardApi(boardId, json, canvas.backgroundColor || '#ffffff')
+    } else {
+      console.warn('[Whiteboard] No boardId found - user not authenticated')
+    }
   } catch (err) {
     console.warn('[Whiteboard] Save failed:', err)
   }
@@ -103,50 +94,32 @@ const loadJsonIntoCanvas = (canvas, parsed, onDone) => {
   }, (o, fabricObj) => { if (fabricObj) fabricObj.setCoords() })
 }
 
-// Try loading from backend first; fall back to localStorage if unavailable.
+// Load canvas data from Neon database only
 const deserializeCanvas = (canvas, onDone) => {
   const boardId = resolveBoardId()
 
-  if (boardId) {
-    loadBoard(boardId)
-      .then(({ canvasJson, background }) => {
-        if (background) canvas.setBackgroundColor(background, () => { })
-        if (canvasJson && canvasJson.objects) {
-          loadJsonIntoCanvas(canvas, canvasJson, onDone)
-        } else {
-          onDone()
-        }
-      })
-      .catch(err => {
-        console.warn('[Whiteboard] Backend load failed, using localStorage:', err.message)
-        // Fallback to localStorage
-        try {
-          const bg = localStorage.getItem(STORAGE_BG)
-          const raw = localStorage.getItem(STORAGE_KEY)
-          if (bg) canvas.setBackgroundColor(bg, () => { })
-          if (raw) {
-            const parsed = JSON.parse(raw)
-            if (parsed?.objects) { loadJsonIntoCanvas(canvas, parsed, onDone); return }
-          }
-        } catch (_) { }
-        onDone()
-      })
+  if (!boardId) {
+    console.warn('[Whiteboard] No boardId found - user not authenticated')
+    onDone()
     return
   }
 
-  // No boardId — use localStorage only (guest / unauthenticated)
-  try {
-    const bg = localStorage.getItem(STORAGE_BG)
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (bg) canvas.setBackgroundColor(bg, () => { })
-    if (!raw) { onDone(); return }
-    const parsed = JSON.parse(raw)
-    if (!parsed?.objects) { onDone(); return }
-    loadJsonIntoCanvas(canvas, parsed, onDone)
-  } catch (err) {
-    console.warn('[Whiteboard] Load failed:', err)
-    onDone()
-  }
+  // Load from Neon database
+  loadBoard(boardId)
+    .then(({ canvasJson, background }) => {
+      if (background) canvas.setBackgroundColor(background, () => { })
+      if (canvasJson && canvasJson.objects) {
+        loadJsonIntoCanvas(canvas, canvasJson, onDone)
+      } else {
+        // No data in backend yet - start with empty canvas
+        onDone()
+      }
+    })
+    .catch(err => {
+      console.warn('[Whiteboard] Backend load failed:', err.message)
+      // Start with empty canvas if backend fails
+      onDone()
+    })
 }
 
 const CTX_ICONS = {

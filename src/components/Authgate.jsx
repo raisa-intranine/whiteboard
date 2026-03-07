@@ -71,6 +71,9 @@ export default function AuthGate({ children, theme }) {
     try {
       const { token, user: u } = await login({ email: form.email, password: form.password })
       setToken(token)
+      // Clear previous user's canvas data from localStorage
+      localStorage.removeItem('wb_canvas_v2')
+      localStorage.removeItem('wb_background_v2')
       localStorage.setItem(SESSION_KEY, JSON.stringify(u))
       setUser(u)
     } catch (err) {
@@ -95,6 +98,9 @@ export default function AuthGate({ children, theme }) {
         password: form.password,
       })
       setToken(token)
+      // Clear previous user's canvas data from localStorage
+      localStorage.removeItem('wb_canvas_v2')
+      localStorage.removeItem('wb_background_v2')
       localStorage.setItem(SESSION_KEY, JSON.stringify(u))
       setUser(u)
     } catch (err) {
@@ -108,6 +114,9 @@ export default function AuthGate({ children, theme }) {
   const handleLogout = () => {
     clearToken()
     localStorage.removeItem(SESSION_KEY)
+    // Clear canvas data from localStorage to prevent data leakage between users
+    localStorage.removeItem('wb_canvas_v2')
+    localStorage.removeItem('wb_background_v2')
     setUser(null)
     setShowProfile(false)
     setForm({ name: '', email: '', password: '', confirm: '' })

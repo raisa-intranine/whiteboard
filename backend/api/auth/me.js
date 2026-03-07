@@ -3,18 +3,14 @@
 // Returns: { id, name, email, boardId }
 
 const pool = require('../../lib/db')
-const { applyCors, requireAuth, sendError } = require('../../lib/middleware')
+const { requireAuth } = require('../../lib/middleware')
 
-module.exports = async (req, res) => {
-    if (applyCors(req, res)) return
-
-    if (req.method !== 'GET') return sendError(res, 405, 'Method not allowed')
-
+const me = async (req, res) => {
     let payload
     try {
         payload = requireAuth(req)
     } catch (err) {
-        return sendError(res, err.status || 401, err.message)
+        return res.status(err.status || 401).json({ error: err.message })
     }
 
     try {
@@ -24,7 +20,7 @@ module.exports = async (req, res) => {
         )
 
         if (result.rows.length === 0) {
-            return sendError(res, 404, 'User not found')
+            return res.status(404).json({ error: 'User not found' })
         }
 
         const user = result.rows[0]
@@ -36,6 +32,8 @@ module.exports = async (req, res) => {
         })
     } catch (err) {
         console.error('[me]', err)
-        return sendError(res, 500, 'Internal server error')
+        return res.status(500).json({ error: 'Internal server error' })
     }
 }
+
+module.exports = { me }

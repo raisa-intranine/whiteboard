@@ -5,16 +5,11 @@
 const bcrypt = require('bcryptjs')
 const pool = require('../../lib/db')
 const { signToken } = require('../../lib/auth')
-const { applyCors, sendError } = require('../../lib/middleware')
 
-module.exports = async (req, res) => {
-    if (applyCors(req, res)) return
-
-    if (req.method !== 'POST') return sendError(res, 405, 'Method not allowed')
-
+const login = async (req, res) => {
     const { email, password } = req.body || {}
 
-    if (!email || !password) return sendError(res, 400, 'Email and password are required')
+    if (!email || !password) return res.status(400).json({ error: 'Email and password are required' })
 
     const normalizedEmail = email.toLowerCase().trim()
 
@@ -25,14 +20,14 @@ module.exports = async (req, res) => {
         )
 
         if (result.rows.length === 0) {
-            return sendError(res, 401, 'No account found with this email')
+            return res.status(401).json({ error: 'No account found with this email' })
         }
 
         const user = result.rows[0]
         const match = await bcrypt.compare(password, user.password_hash)
 
         if (!match) {
-            return sendError(res, 401, 'Incorrect password')
+            return res.status(401).json({ error: 'Incorrect password' })
         }
 
         const token = signToken({ userId: user.id, email: user.email, boardId: user.board_id })
@@ -48,6 +43,8 @@ module.exports = async (req, res) => {
         })
     } catch (err) {
         console.error('[login]', err)
-        return sendError(res, 500, 'Internal server error')
+        return res.status(500).json({ error: 'Internal server error' })
     }
 }
+
+module.exports = { login }

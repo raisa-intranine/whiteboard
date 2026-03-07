@@ -2,9 +2,10 @@
     "name": "whiteboard-backend",
     "version": "1.0.0",
     "description": "Backend for collaborative whiteboard app",
-    "main": "index.js",
+    "main": "server.js",
     "scripts": {
-        "dev": "node -e \"require('dotenv').config(); require('./api/auth/signup')\"",
+        "start": "node server.js",
+        "dev": "node server.js",
         "migrate": "node lib/migrate.js"
     },
     "dependencies": {
@@ -12,6 +13,7 @@
         "bcryptjs": "^2.4.3",
         "cors": "^2.8.5",
         "dotenv": "^16.4.5",
+        "express": "^4.22.1",
         "jsonwebtoken": "^9.0.2",
         "pg": "^8.13.3",
         "uuid": "^9.0.1"

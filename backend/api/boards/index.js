@@ -2,18 +2,14 @@
 // Returns list of boards owned by the authenticated user
 
 const pool = require('../../lib/db')
-const { applyCors, requireAuth, sendError } = require('../../lib/middleware')
+const { requireAuth } = require('../../lib/middleware')
 
-module.exports = async (req, res) => {
-    if (applyCors(req, res)) return
-
-    if (req.method !== 'GET') return sendError(res, 405, 'Method not allowed')
-
+const getBoards = async (req, res) => {
     let payload
     try {
         payload = requireAuth(req)
     } catch (err) {
-        return sendError(res, err.status || 401, err.message)
+        return res.status(err.status || 401).json({ error: err.message })
     }
 
     try {
@@ -28,6 +24,13 @@ module.exports = async (req, res) => {
         return res.status(200).json({ boards: result.rows })
     } catch (err) {
         console.error('[boards list]', err)
-        return sendError(res, 500, 'Internal server error')
+        return res.status(500).json({ error: 'Internal server error' })
     }
 }
+
+const createBoard = async (req, res) => {
+    // Placeholder for creating new boards
+    res.status(501).json({ error: 'Not implemented' })
+}
+
+module.exports = { getBoards, createBoard }
