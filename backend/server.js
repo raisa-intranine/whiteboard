@@ -19,6 +19,7 @@ const { googleAuth, googleCallback } = require('./api/auth/google')
 const { me } = require('./api/auth/me')
 const { getBoards, createBoard } = require('./api/boards/index')
 const { getBoard, updateBoard, deleteBoard } = require('./api/boards/[boardId]')
+const { shareBoard } = require('./api/boards/share')
 const { getRealtimeToken } = require('./api/realtime/token')
 
 // Health check
@@ -37,6 +38,7 @@ app.post('/api/boards', createBoard)
 app.get('/api/boards/:boardId', getBoard)
 app.put('/api/boards/:boardId', updateBoard)
 app.delete('/api/boards/:boardId', deleteBoard)
+app.post('/api/boards/:boardId/share', shareBoard)
 
 // Realtime routes
 app.get('/api/realtime/token', getRealtimeToken)

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { getMe, setToken, clearToken, getToken } from '../services/api'
+import { getMe, setToken, clearToken, getToken, shareBoard } from '../services/api'
 import './AuthGate.css'
 
 const SESSION_KEY = 'wb_session_v1' // kept for name/email cache only
@@ -33,14 +33,34 @@ export default function AuthGate({ children, theme }) {
     const params = new URLSearchParams(window.location.search)
     const urlToken = params.get('token')
     const urlError = params.get('error')
+    const urlBoard = params.get('board')
 
+    // If a ?board= is in the URL (user clicked share link), save it so it
+    // survives the Google OAuth redirect round-trip.
+    if (urlBoard) {
+      localStorage.setItem('wb_pending_board', urlBoard)
+    }
+
+    // If OAuth just completed (?token=...), restore any pending board param
     if (urlToken) {
       setToken(urlToken)
-      // Clean up the URL
-      window.history.replaceState({}, document.title, window.location.pathname)
+      // Strip only auth-related params; keep ?board= and any other params intact
+      params.delete('token')
+      // Restore pending board if not already in params
+      const pendingBoard = localStorage.getItem('wb_pending_board')
+      if (pendingBoard && !params.get('board')) {
+        params.set('board', pendingBoard)
+      }
+      if (pendingBoard) localStorage.removeItem('wb_pending_board')
+      const remaining = params.toString()
+      const cleanUrl = window.location.pathname + (remaining ? `?${remaining}` : '')
+      window.history.replaceState({}, document.title, cleanUrl)
     } else if (urlError) {
       setError(`Authentication failed: ${urlError.replace(/_/g, ' ')}`)
-      window.history.replaceState({}, document.title, window.location.pathname)
+      params.delete('error')
+      const remaining = params.toString()
+      const cleanUrl = window.location.pathname + (remaining ? `?${remaining}` : '')
+      window.history.replaceState({}, document.title, cleanUrl)
     }
 
     const currentToken = getToken()
@@ -89,6 +109,13 @@ export default function AuthGate({ children, theme }) {
   // ── Share board link ──────────────────────────────────────────────────────
   const handleShare = async () => {
     const boardUrl = `${window.location.origin}${window.location.pathname}?board=${user.boardId}`
+    try {
+      // Mark the board as public on the backend so anyone with the link can access it
+      await shareBoard(user.boardId)
+    } catch (err) {
+      console.warn('[Share] Could not mark board as public:', err.message)
+      // Still copy the link even if the API call fails
+    }
     try {
       await navigator.clipboard.writeText(boardUrl)
     } catch {

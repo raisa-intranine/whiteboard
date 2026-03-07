@@ -6,6 +6,7 @@ import { getRealtimeToken } from './api'
 
 let realtimeClient = null
 let boardChannel = null
+let myClientId = null
 
 /**
  * Initialize the Ably client and subscribe to a board channel.
@@ -27,10 +28,16 @@ export const initRealtime = async (boardId, onMessage) => {
                 callback(err, null)
             }
         },
-        echoMessages: true, // receive our own messages to handle multi-tab scenarios
+        echoMessages: false, // don't receive our own published messages
     })
 
     boardChannel = realtimeClient.channels.get(`board:${boardId}`)
+
+    // Track our own clientId so we can optionally filter self-messages
+    realtimeClient.connection.on('connected', () => {
+        myClientId = realtimeClient.auth.clientId
+    })
+
     boardChannel.subscribe('canvas:delta', (msg) => {
         if (typeof onMessage === 'function') onMessage(msg.data)
     })

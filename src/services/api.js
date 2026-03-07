@@ -81,3 +81,14 @@ export const getRealtimeToken = (boardId) => {
     const path = boardId ? `/api/realtime/token?boardId=${boardId}` : '/api/realtime/token'
     return request('GET', path)
 }
+
+// ── Share API ─────────────────────────────────────────────────────────────────
+
+/**
+ * Mark a board as publicly shareable (is_public = true).
+ * Optionally add a specific collaborator by email.
+ * @param {string} boardId
+ * @param {string|null} email  - optional collaborator email for private invite
+ */
+export const shareBoard = (boardId, email = null) =>
+    request('POST', `/api/boards/${boardId}/share`, email ? { email } : {})
