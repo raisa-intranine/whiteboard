@@ -27,7 +27,7 @@ export const initRealtime = async (boardId, onMessage) => {
                 callback(err, null)
             }
         },
-        echoMessages: false, // don't receive our own published messages
+        echoMessages: true, // receive our own messages to handle multi-tab scenarios
     })
 
     boardChannel = realtimeClient.channels.get(`board:${boardId}`)

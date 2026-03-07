@@ -13,7 +13,7 @@ const SERIALIZE_PROPS = [
   'stickyText', 'stickyRect', 'selectable', 'evented',
   'perPixelTargetFind', 'strokeUniform', 'hasControls', 'hasBorders',
   'shadow', 'rx', 'ry', 'isEraserStroke', 'isFrame', 'src', 'crossOrigin',
-  'isPlaceholder', 'placeholderText',
+  'isPlaceholder', 'placeholderText', 'realtimeId',
 ]
 
 // Debounce helper for throttling backend saves
@@ -25,8 +25,14 @@ const debounce = (fn, ms) => {
   }
 }
 
-// Resolve the boardId from stored session (all users are authenticated)
+// Resolve the boardId from URL query param first, then fall back to stored session
 const resolveBoardId = () => {
+  // Check URL for shared board
+  const params = new URLSearchParams(window.location.search)
+  const sharedBoardId = params.get('board')
+  if (sharedBoardId) return sharedBoardId
+  
+  // Fall back to user's own board
   try {
     const session = JSON.parse(localStorage.getItem('wb_session_v1'))
     return session?.boardId || null
@@ -576,21 +582,35 @@ const Whiteboard = ({
       initRealtime(boardId, (msg) => {
         // Received a drawing delta from another collaborator
         if (!msg || msg.type !== 'canvas:delta' || !msg.payload) return
-        realtimeIgnoreRef.current = true
+        
         const fabricObject = msg.payload
-        // Find existing object by custom id or just add new
+        realtimeIgnoreRef.current = true
+        
+        // Find existing object by realtimeId
         const existing = canvas.getObjects().find(o => o.realtimeId === fabricObject.realtimeId)
+        
         if (fabricObject._deleted) {
-          if (existing) { canvas.remove(existing); canvas.renderAll() }
+          // Delete the object
+          if (existing) {
+            canvas.remove(existing)
+            canvas.renderAll()
+          }
         } else if (existing) {
+          // Update existing object
           existing.set(fabricObject)
           existing.setCoords()
           canvas.renderAll()
         } else {
+          // Add new object
           fabric.util.enlivenObjects([fabricObject], ([obj]) => {
-            if (obj) { canvas.add(obj); canvas.renderAll() }
+            if (obj) {
+              obj.realtimeId = fabricObject.realtimeId
+              canvas.add(obj)
+              canvas.renderAll()
+            }
           })
         }
+        
         realtimeIgnoreRef.current = false
       }).catch(err => console.warn('[Whiteboard] Realtime init failed:', err.message))
     }
@@ -603,8 +623,10 @@ const Whiteboard = ({
       // Broadcast delta to collaborators via Ably
       if (boardId && e?.target) {
         const obj = e.target
+        // Assign unique ID if not present
+        if (!obj.realtimeId) obj.realtimeId = `obj_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
         const delta = obj.toJSON(SERIALIZE_PROPS)
-        delta.realtimeId = obj.realtimeId || obj.__uid
+        delta.realtimeId = obj.realtimeId
         publishDelta({ type: 'canvas:delta', payload: delta })
       }
     }
@@ -617,7 +639,7 @@ const Whiteboard = ({
       // Broadcast deletion
       if (boardId && e?.target) {
         const delta = e.target.toJSON(SERIALIZE_PROPS)
-        delta.realtimeId = e.target.realtimeId || e.target.__uid
+        delta.realtimeId = e.target.realtimeId || `obj_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
         delta._deleted = true
         publishDelta({ type: 'canvas:delta', payload: delta })
       }
