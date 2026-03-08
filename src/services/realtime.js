@@ -32,15 +32,24 @@ export const initRealtime = async (boardId, onMessage) => {
     })
 
     boardChannel = realtimeClient.channels.get(`board:${boardId}`)
+    
+    // Log channel state changes
+    boardChannel.on('attached', () => {
+        console.log('[Realtime] Channel attached:', boardChannel.name)
+    })
+    boardChannel.on('failed', (err) => {
+        console.error('[Realtime] Channel failed:', err)
+    })
 
     // Track our own clientId
     realtimeClient.connection.on('connected', () => {
         myClientId = realtimeClient.auth.clientId
-        console.log('[Realtime] Connected with clientId:', myClientId)
+        console.log('[Realtime] Connected with clientId:', myClientId, 'to board:', boardId)
     })
 
     // Subscribe to all canvas events
     boardChannel.subscribe((msg) => {
+        console.log('[Realtime] Received message:', msg.data?.type, 'from clientId:', msg.clientId)
         if (typeof onMessage === 'function') onMessage(msg.data)
     })
 }
@@ -50,8 +59,29 @@ export const initRealtime = async (boardId, onMessage) => {
  * @param {{ type: 'canvas:full', canvasJson: object, background: string }} data
  */
 export const publishFullCanvas = (data) => {
-    if (!boardChannel) return
-    boardChannel.publish('canvas:sync', data)
+    if (!boardChannel) {
+        console.warn('[Realtime] Cannot publish - no active channel')
+        return
+    }
+    console.log('[Realtime] Publishing full canvas to channel:', boardChannel.name)
+    
+    // Ably will throw an error if message is too large, catch it gracefully
+    boardChannel.publish('canvas:sync', data).catch(err => {
+        console.error('[Realtime] Failed to publish canvas:', err.message)
+        console.log('[Realtime] Canvas data too large - collaborators will sync from database instead')
+    })
+}
+
+/**
+ * Request a canvas sync from other collaborators (useful when database load fails)
+ */
+export const requestSync = () => {
+    if (!boardChannel) {
+        console.warn('[Realtime] Cannot request sync - no active channel')
+        return
+    }
+    console.log('[Realtime] Requesting canvas sync from collaborators')
+    boardChannel.publish('canvas:sync', { type: 'sync:request' })
 }
 
 /**
@@ -59,7 +89,11 @@ export const publishFullCanvas = (data) => {
  * @param {{ type: 'canvas:clear', background: string }} data
  */
 export const publishClear = (data) => {
-    if (!boardChannel) return
+    if (!boardChannel) {
+        console.warn('[Realtime] Cannot publish clear - no active channel')
+        return
+    }
+    console.log('[Realtime] Publishing clear canvas to channel:', boardChannel.name)
     boardChannel.publish('canvas:sync', data)
 }
 
@@ -82,4 +116,3 @@ export const disconnectRealtime = async () => {
     }
     myClientId = null
 }
-

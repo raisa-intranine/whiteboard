@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import './ConfirmDialog.css'
+import './Confirmdialog.css'
 
 const ConfirmDialog = ({ visible, title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', onConfirm, onCancel, danger = true }) => {
   useEffect(() => {

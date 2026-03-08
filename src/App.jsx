@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import AuthGate from './components/AuthGate'
+import AuthGate from './components/Authgate'
 import Whiteboard from './components/Whiteboard'
 import Toolbar from './components/Toolbar'
 import Sidebar from './components/Sidebar'
@@ -28,7 +28,7 @@ function App() {
     const actualTheme = resolveTheme(savedTheme)
     return actualTheme === 'dark' ? '#ffffff' : '#000000'
   })
-  const [strokeWidth, setStrokeWidth] = useState(2)
+  const [strokeWidth, setStrokeWidth] = useState(3)
   const [canvasRef, setCanvasRef] = useState(null)
 
   const DARK_DEFAULT_BG = '#1e1f20'
@@ -53,6 +53,24 @@ function App() {
     const actualTheme = resolveTheme(savedTheme)
     return actualTheme === 'dark' ? '#1e1f20' : '#ffffff'
   })
+
+  // Called once after loading board data from DB to sync canvas background + UI theme
+  const syncBoardAppearance = (loadedBg) => {
+    if (!loadedBg) return
+    setCanvasBackground(loadedBg)
+    localStorage.setItem('wb_background_v2', loadedBg)
+    // Detect dark/light from luminance
+    const r = parseInt(loadedBg.slice(1, 3), 16) || 0
+    const g = parseInt(loadedBg.slice(3, 5), 16) || 0
+    const b = parseInt(loadedBg.slice(5, 7), 16) || 0
+    const isDark = (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.5
+    const newTheme = isDark ? 'dark' : 'light'
+    setThemeSetting(newTheme)
+    setThemeState(newTheme)
+    localStorage.setItem('wb_theme', newTheme)
+    setColor(isDark ? '#ffffff' : '#000000')
+  }
+
   const [showSidebar, setShowSidebar] = useState(false)
   const [fillShape, setFillShape] = useState(false)
   const [canUndo, setCanUndo] = useState(false)
@@ -142,6 +160,8 @@ function App() {
             strokeWidth={strokeWidth}
             setCanvasRef={setCanvasRef}
             canvasBackground={canvasBackground}
+            setCanvasBackground={setCanvasBackground}
+            syncBoardAppearance={syncBoardAppearance}
             fillShape={fillShape}
             onHistoryChange={handleHistoryChange}
             theme={theme}

@@ -4,16 +4,18 @@ import ShapeProperties from './ShapeProperties'
 import LaserPointer from './Laserpointer'
 import './Whiteboard.css'
 import { loadBoard, saveBoard } from '../services/api'
-import { initRealtime, publishFullCanvas, publishClear, disconnectRealtime } from '../services/realtime'
+import { initRealtime, publishFullCanvas, publishClear, disconnectRealtime, requestSync } from '../services/realtime'
 
 const SHAPE_TYPES = ['rect', 'circle', 'triangle', 'polygon', 'ellipse', 'group', 'i-text', 'textbox', 'image']
 const FONTS = ['DM Sans', 'Arial', 'Georgia', 'Courier New', 'Verdana', 'Times New Roman', 'Trebuchet MS']
 
 const SERIALIZE_PROPS = [
-  'stickyText', 'stickyRect', 'selectable', 'evented',
+  'selectable', 'evented',
   'perPixelTargetFind', 'strokeUniform', 'hasControls', 'hasBorders',
   'shadow', 'rx', 'ry', 'isEraserStroke', 'isFrame', 'src', 'crossOrigin',
-  'isPlaceholder', 'placeholderText',
+  'isPlaceholder', 'placeholderText', 'editable',
+  'isStickyNote', 'isStickyText',
+  'fill', 'stroke', 'strokeWidth', 'strokeLineCap', 'opacity',
 ]
 
 // Debounce helper for throttling backend saves
@@ -89,41 +91,90 @@ const serializeCanvas = (canvas) => {
 }
 
 // Helper: load JSON into the canvas and restore object state
-const loadJsonIntoCanvas = (canvas, parsed, onDone) => {
+const loadJsonIntoCanvas = (canvas, parsed, isMutingRef, onDone) => {
+  // Check if canvas is still valid (not disposed)
+  if (!canvas || !canvas.lowerCanvasEl) {
+    if (onDone) onDone()
+    return
+  }
+  // Suppress onMutation firing during load
+  if (isMutingRef) isMutingRef.current = true
   canvas.loadFromJSON(parsed, () => {
-    canvas.getObjects().forEach(obj => {
+    const objs = canvas.getObjects()
+    // Rebuild sticky note references: identify sticky rects and texts by marker properties
+    const textboxes = objs.filter(o => (o.type === 'textbox' || o.type === 'i-text') && o.isStickyText)
+    const rects = objs.filter(o => o.type === 'rect' && o.isStickyNote)
+
+    // Rebuild sticky note pairs by checking if textbox is inside/near rect bounds
+    rects.forEach(rect => {
+      const matchedTxt = textboxes.find(t => {
+        const isClose = Math.abs(t.left - (rect.left + 16)) < 5 && Math.abs(t.top - (rect.top + 16)) < 5
+        return isClose && !t.stickyRect // not already matched
+      })
+      if (matchedTxt) {
+        rect.stickyText = matchedTxt
+        matchedTxt.stickyRect = rect
+        // Re-attach event handlers
+        rect.on('moving', function () { this.stickyText?.set({ left: this.left + 16, top: this.top + 16 }); this.stickyText?.setCoords() })
+        rect.on('scaling', function () { this.stickyText?.set({ left: this.left + 16, top: this.top + 16 }); this.stickyText?.setCoords() })
+        rect.on('rotating', function () { this.stickyText?.set({ left: this.left + 16, top: this.top + 16 }); this.stickyText?.setCoords() })
+        // When rect finishes moving, ensure text position is finalized and trigger save
+        rect.on('modified', function () {
+          if (this.stickyText) {
+            this.stickyText.set({ left: this.left + 16, top: this.top + 16 })
+            this.stickyText.setCoords()
+          }
+        })
+        // Ensure textbox remains editable
+        matchedTxt.set({ editable: true, selectable: true, evented: true })
+      }
+    })
+
+    objs.forEach(obj => {
       obj.set({ selectable: true, evented: true, objectCaching: true, padding: 10 })
       if (obj.isEraserStroke) obj.set({ selectable: false, evented: false })
+      
+      // Ensure stroke paths have minimum width for visibility
+      if (obj.type === 'path' && obj.stroke && obj.strokeWidth < 1) {
+        obj.set({ strokeWidth: 1.5 })
+      }
+      
       if (obj.type === 'line') {
         obj.set({ perPixelTargetFind: true, hasBorders: false })
         applyLineControls(obj)
       }
-      if (obj.stickyText) {
-        const txt = canvas.getObjects().find(o => o === obj.stickyText)
-        if (txt) {
-          obj.on('moving', function () {
-            this.stickyText?.set({ left: this.left + 16, top: this.top + 16 })
-            this.stickyText?.setCoords()
-          })
-          obj.on('scaling', function () {
-            this.stickyText?.set({ left: this.left + 16, top: this.top + 16 })
-            this.stickyText?.setCoords()
-          })
-          obj.on('rotating', function () {
-            this.stickyText?.set({ left: this.left + 16, top: this.top + 16 })
-            this.stickyText?.setCoords()
-          })
-        }
-      }
       obj.setCoords()
     })
-    canvas.renderAll()
+    // Check canvas validity before rendering (async callback might run after disposal)
+    if (!canvas || !canvas.lowerCanvasEl) {
+      console.warn('[loadJsonIntoCanvas] Canvas not available after JSON load')
+      if (isMutingRef) isMutingRef.current = false
+      onDone()
+      return
+    }
+    console.log('[loadJsonIntoCanvas] Loaded', objs.length, 'objects')
+    
+    // Debug: Log first few objects to see their properties
+    if (objs.length > 0) {
+      console.log('[loadJsonIntoCanvas] Sample object:', {
+        type: objs[0].type,
+        left: objs[0].left,
+        top: objs[0].top,
+        visible: objs[0].visible,
+        opacity: objs[0].opacity,
+        stroke: objs[0].stroke,
+        fill: objs[0].fill
+      })
+    }
+    
+    canvas.requestRenderAll()
+    if (isMutingRef) isMutingRef.current = false
     onDone()
   }, (o, fabricObj) => { if (fabricObj) fabricObj.setCoords() })
 }
 
 // Load canvas data from Neon database only
-const deserializeCanvas = (canvas, onDone) => {
+const deserializeCanvas = (canvas, isMutingRef, onDone) => {
   const boardId = resolveBoardId()
 
   if (!boardId) {
@@ -132,25 +183,61 @@ const deserializeCanvas = (canvas, onDone) => {
     return
   }
 
-  // Load from Neon database
-  loadBoard(boardId)
+  console.log('[Whiteboard] Loading board from database:', boardId)
+
+  // Load from Neon database with retry logic
+  const loadWithRetry = async (retries = 3) => {
+    for (let i = 0; i < retries; i++) {
+      try {
+        const data = await loadBoard(boardId)
+        return data
+      } catch (err) {
+        console.warn(`[Whiteboard] Board load attempt ${i + 1}/${retries} failed:`, err.message)
+        if (i < retries - 1) {
+          // Wait before retrying (exponential backoff: 1s, 2s, 4s)
+          await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000))
+        } else {
+          throw err
+        }
+      }
+    }
+  }
+
+  loadWithRetry()
     .then(({ canvasJson, background }) => {
+      console.log('[Whiteboard] Board loaded successfully. Objects count:', canvasJson?.objects?.length || 0, 'Background:', background)
       if (!canvas.lowerCanvasEl) {
+        console.warn('[Whiteboard] Canvas disposed during load - skipping')
         onDone()
         return
       }
-      if (background) canvas.setBackgroundColor(background, () => { })
-      if (canvasJson && canvasJson.objects) {
-        loadJsonIntoCanvas(canvas, canvasJson, onDone)
+      if (background) {
+        canvas.setBackgroundColor(background, () => {
+          canvas.requestRenderAll()
+        })
+      }
+      if (canvasJson && canvasJson.objects && canvasJson.objects.length > 0) {
+        console.log('[Whiteboard] Loading', canvasJson.objects.length, 'objects from database')
+        loadJsonIntoCanvas(canvas, canvasJson, isMutingRef, () => {
+          console.log('[Whiteboard] Canvas load complete, objects on canvas:', canvas.getObjects().length)
+          // Force a final render to ensure everything is visible
+          if (canvas.lowerCanvasEl) {
+            canvas.requestRenderAll()
+          }
+          onDone()
+        })
       } else {
         // No data in backend yet - start with empty canvas
+        console.log('[Whiteboard] No canvas data in database - starting with empty canvas')
         onDone()
       }
     })
     .catch(err => {
-      console.warn('[Whiteboard] Backend load failed:', err.message)
-      // Start with empty canvas if backend fails
-      onDone()
+      console.error('[Whiteboard] Board load failed after retries:', err.message, '- Starting with empty canvas')
+      console.log('[Whiteboard] Realtime collaboration will still work for live updates')
+      // Start with empty canvas if backend fails - realtime will still work
+      // Request sync from other collaborators after a short delay
+      onDone({ requestSync: true })
     })
 }
 
@@ -399,7 +486,7 @@ const drawPlaceholder = (ctx, obj) => {
 
 const Whiteboard = ({
   tool, setTool, color, strokeWidth,
-  setCanvasRef, canvasBackground, fillShape, onHistoryChange, theme,
+  setCanvasRef, canvasBackground, setCanvasBackground, syncBoardAppearance, fillShape, onHistoryChange, theme,
 }) => {
   // Ref to suppress local re-processing of our own realtime echo
   const realtimeIgnoreRef = useRef(false)
@@ -412,6 +499,14 @@ const Whiteboard = ({
   const panActiveRef = useRef(false)
   const panLastPosRef = useRef(null)
   const panPointerId = useRef(null)
+  // True once board data has finished loading from the backend
+  const isLoadedRef = useRef(false)
+  // Tracks if this mount is still active (handles StrictMode cleanup)
+  const mountedRef = useRef(true)
+  // Track when we last made a local change (to avoid overwriting with stale DB data)
+  const lastLocalChangeRef = useRef(0)
+  // Track if user is actively editing text
+  const isEditingTextRef = useRef(false)
 
   const historyRef = useRef([])
   const historyIdxRef = useRef(-1)
@@ -436,46 +531,103 @@ const Whiteboard = ({
   const pushSnapshot = useCallback(() => {
     const canvas = fabricRef.current
     if (!canvas || isMutingRef.current) return
+    // Don't push if canvas is disposed (StrictMode cleanup)
+    if (!canvas.lowerCanvasEl || !canvas.wrapperEl) return
     const json = canvas.toJSON(SERIALIZE_PROPS)
+    // Avoid duplicate consecutive snapshots (prevents double-click-to-undo issue)
+    const prev = historyRef.current[historyIdxRef.current]
+    if (prev && JSON.stringify(json) === JSON.stringify(prev)) return
     historyRef.current = historyRef.current.slice(0, historyIdxRef.current + 1)
     historyRef.current.push(json)
     historyIdxRef.current = historyRef.current.length - 1
     onHistoryChange?.({ canUndo: historyIdxRef.current > 0, canRedo: false })
+    
+    // Save history to localStorage for persistence across refreshes
+    const boardId = resolveBoardId()
+    if (boardId) {
+      try {
+        // Keep only last 20 snapshots to avoid localStorage quota issues
+        const maxSnapshots = 20
+        const startIdx = Math.max(0, historyRef.current.length - maxSnapshots)
+        const historyToSave = historyRef.current.slice(startIdx)
+        localStorage.setItem(`wb_history_${boardId}`, JSON.stringify(historyToSave))
+        localStorage.setItem(`wb_history_idx_${boardId}`, String(historyToSave.length - 1))
+      } catch (err) {
+        console.warn('[Whiteboard] Failed to save history to localStorage:', err)
+      }
+    }
   }, [onHistoryChange])
 
   const applySnapshot = useCallback((json) => {
     const canvas = fabricRef.current
     if (!canvas) return
-    isMutingRef.current = true
-    canvas.loadFromJSON(json, () => {
-      canvas.getObjects().forEach(o => {
-        o.set({ selectable: true, evented: true })
-        if (o.isEraserStroke) o.set({ selectable: false, evented: false })
-        if (o.type === 'line') {
-          o.set({ perPixelTargetFind: true, hasBorders: false })
-          applyLineControls(o)
-          delete o.__origStroke
-        }
-        o.setCoords()
-      })
-      canvas.renderAll()
+    if (!json || typeof json !== 'object') {
+      console.warn('[Whiteboard] Invalid snapshot data:', json)
+      return
+    }
+    loadJsonIntoCanvas(canvas, json, isMutingRef, () => {
       serializeCanvas(canvas)
-      isMutingRef.current = false
     })
   }, [])
 
   const undo = useCallback(() => {
     if (historyIdxRef.current <= 0) return
+    const targetSnapshot = historyRef.current[historyIdxRef.current - 1]
+    if (!targetSnapshot) {
+      console.warn('[Whiteboard] Undo: target snapshot not found')
+      return
+    }
     historyIdxRef.current -= 1
-    applySnapshot(historyRef.current[historyIdxRef.current])
+    applySnapshot(targetSnapshot)
     onHistoryChange?.({ canUndo: historyIdxRef.current > 0, canRedo: historyIdxRef.current < historyRef.current.length - 1 })
+    
+    // Save updated index to localStorage
+    const boardId = resolveBoardId()
+    if (boardId) {
+      localStorage.setItem(`wb_history_idx_${boardId}`, String(historyIdxRef.current))
+      
+      // Broadcast the undo to collaborators
+      const canvas = fabricRef.current
+      if (canvas) {
+        const canvasJson = canvas.toJSON(SERIALIZE_PROPS)
+        const background = canvas.backgroundColor || '#ffffff'
+        const messageSize = JSON.stringify({ canvasJson, background }).length
+        
+        if (messageSize < 60000) {
+          publishFullCanvas({ type: 'canvas:full', canvasJson, background })
+        }
+      }
+    }
   }, [applySnapshot, onHistoryChange])
 
   const redo = useCallback(() => {
     if (historyIdxRef.current >= historyRef.current.length - 1) return
+    const targetSnapshot = historyRef.current[historyIdxRef.current + 1]
+    if (!targetSnapshot) {
+      console.warn('[Whiteboard] Redo: target snapshot not found')
+      return
+    }
     historyIdxRef.current += 1
-    applySnapshot(historyRef.current[historyIdxRef.current])
+    applySnapshot(targetSnapshot)
     onHistoryChange?.({ canUndo: historyIdxRef.current > 0, canRedo: historyIdxRef.current < historyRef.current.length - 1 })
+    
+    // Save updated index to localStorage
+    const boardId = resolveBoardId()
+    if (boardId) {
+      localStorage.setItem(`wb_history_idx_${boardId}`, String(historyIdxRef.current))
+      
+      // Broadcast the redo to collaborators
+      const canvas = fabricRef.current
+      if (canvas) {
+        const canvasJson = canvas.toJSON(SERIALIZE_PROPS)
+        const background = canvas.backgroundColor || '#ffffff'
+        const messageSize = JSON.stringify({ canvasJson, background }).length
+        
+        if (messageSize < 60000) {
+          publishFullCanvas({ type: 'canvas:full', canvasJson, background })
+        }
+      }
+    }
   }, [applySnapshot, onHistoryChange])
 
   const clearCanvas = useCallback(() => {
@@ -491,14 +643,21 @@ const Whiteboard = ({
     canvas.discardActiveObject()
     canvas.fire('object:modified')
     canvas.renderAll()
+    // Reset history
+    historyRef.current = []
+    historyIdxRef.current = -1
+    onHistoryChange?.({ canUndo: false, canRedo: false })
     // Broadcast clear to all collaborators
     const boardId = resolveBoardId()
     if (boardId) {
       publishClear({ type: 'canvas:clear', background: canvas.backgroundColor || '#ffffff' })
+      // Clear history from localStorage when clearing canvas
+      localStorage.removeItem(`wb_history_${boardId}`)
+      localStorage.removeItem(`wb_history_idx_${boardId}`)
     }
     // Also save the cleared state to DB
     serializeCanvas(canvas)
-  }, [])
+  }, [onHistoryChange])
 
   const deleteSelected = useCallback(() => {
     const canvas = fabricRef.current
@@ -552,6 +711,11 @@ const Whiteboard = ({
 
   useEffect(() => {
     const container = containerRef.current
+    // Reset history on mount (handles React StrictMode double-mount)
+    historyRef.current = []
+    historyIdxRef.current = -1
+    isLoadedRef.current = false
+    mountedRef.current = true
     const canvas = new fabric.Canvas(canvasRef.current, {
       width: container.clientWidth,
       height: container.clientHeight,
@@ -602,8 +766,232 @@ const Whiteboard = ({
       }
     }
 
-    // ── Load board data (backend → localStorage fallback) ─────────────────
-    deserializeCanvas(canvas, () => pushSnapshot())
+    // ── Load board data from backend ──────────────────────────────────────
+    deserializeCanvas(canvas, isMutingRef, (result) => {
+      isLoadedRef.current = true
+      
+      console.log('[Whiteboard] Canvas loaded. Dimensions:', canvas.getWidth(), 'x', canvas.getHeight(), 'Objects:', canvas.getObjects().length)
+      
+      // Sync the background AND the UI theme to match what the DB stored
+      const loadedBg = canvas.backgroundColor
+      if (loadedBg && typeof syncBoardAppearance === 'function') {
+        syncBoardAppearance(loadedBg)
+      }
+      
+      // Common variables used throughout
+      const bid = resolveBoardId()
+      const params = new URLSearchParams(window.location.search)
+      const isSharedBoard = params.get('board') !== null
+      
+      // If database load failed, request sync from collaborators after realtime connects
+      if (result && result.requestSync) {
+        console.log('[Whiteboard] Will request sync from collaborators')
+        setTimeout(() => {
+          if (fabricRef.current) {
+            console.log('[Whiteboard] Requesting current canvas from other users')
+            requestSync()
+          }
+        }, 1000) // Wait 1 second for realtime to fully connect
+      }
+      
+      // For all boards, poll database as fallback when realtime messages are too large (>60KB)
+      // Both sender and receiver need this for large canvases
+      if (bid) {
+        console.log('[Whiteboard] Setting up database polling (fallback for large canvases)')
+        let lastKnownJson = ''
+        
+        const syncInterval = setInterval(() => {
+          if (!mountedRef.current || !fabricRef.current) {
+            clearInterval(syncInterval)
+            return
+          }
+          
+          // Don't poll while user is actively interacting
+          if (isDrawingRef.current || isMutingRef.current || isEditingTextRef.current) return
+          
+          // Don't poll right after local changes - give time for save to complete
+          const timeSinceLastChange = Date.now() - lastLocalChangeRef.current
+          if (timeSinceLastChange < 10000) {
+            return
+          }
+          
+          loadBoard(bid)
+            .then(({ canvasJson, background }) => {
+              const currentCanvas = fabricRef.current
+              if (!currentCanvas || !currentCanvas.lowerCanvasEl) return
+              
+              // Don't interrupt active interactions
+              if (isDrawingRef.current || isMutingRef.current || isEditingTextRef.current) return
+              
+              // Compare with last known state to detect actual changes
+              const newJson = JSON.stringify(canvasJson)
+              if (newJson !== lastKnownJson) {
+                lastKnownJson = newJson
+                console.log('[Whiteboard] Database has updates. Syncing...')
+                realtimeIgnoreRef.current = true
+                loadJsonIntoCanvas(currentCanvas, canvasJson, isMutingRef, () => {
+                  if (background && currentCanvas.lowerCanvasEl) {
+                    currentCanvas.setBackgroundColor(background, () => {
+                      currentCanvas.requestRenderAll()
+                    })
+                  } else {
+                    currentCanvas.requestRenderAll()
+                  }
+                  realtimeIgnoreRef.current = false
+                })
+              }
+            })
+            .catch(err => {
+              console.debug('[Whiteboard] Database poll failed:', err.message)
+            })
+        }, 3000) // Poll every 3 seconds
+      }
+      // Restore viewport transform from localStorage (but NOT for shared boards)
+      if (bid && canvas.lowerCanvasEl && canvas.wrapperEl && !isSharedBoard) {
+        const savedVpt = localStorage.getItem(`wb_viewport_${bid}`)
+        if (savedVpt) {
+          try {
+            const vpt = JSON.parse(savedVpt)
+            // Validate viewport transform array before applying
+            if (Array.isArray(vpt) && vpt.length === 6) {
+              console.log('[Whiteboard] Restoring saved viewport for own board')
+              canvas.setViewportTransform(vpt)
+              canvas.renderAll()
+            }
+          } catch (err) {
+            console.warn('[Whiteboard] Failed to restore viewport transform:', err)
+          }
+        }
+      }
+      
+      // Restore undo/redo history from localStorage
+      let historyRestored = false
+      if (bid) {
+        try {
+          const savedHistory = localStorage.getItem(`wb_history_${bid}`)
+          const savedIdx = localStorage.getItem(`wb_history_idx_${bid}`)
+          if (savedHistory) {
+            const parsed = JSON.parse(savedHistory)
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              historyRef.current = parsed
+              historyIdxRef.current = savedIdx ? parseInt(savedIdx, 10) : parsed.length - 1
+              
+              // Ensure index is within bounds
+              if (historyIdxRef.current < 0) historyIdxRef.current = 0
+              if (historyIdxRef.current >= parsed.length) historyIdxRef.current = parsed.length - 1
+              
+              // Update button states
+              onHistoryChange?.({
+                canUndo: historyIdxRef.current > 0,
+                canRedo: historyIdxRef.current < parsed.length - 1
+              })
+              
+              historyRestored = true
+              console.log(`[Whiteboard] Restored ${parsed.length} snapshots, index: ${historyIdxRef.current}`)
+            }
+          }
+        } catch (err) {
+          console.warn('[Whiteboard] Failed to restore history:', err)
+        }
+      }
+      
+      // If no history was restored, create initial snapshot immediately
+      // This ensures we can undo back to the initial loaded state
+      if (!historyRestored && canvas && canvas.lowerCanvasEl) {
+        // Create initial snapshot synchronously to ensure it happens before any user interaction
+        try {
+          const json = JSON.stringify(canvas.toJSON(SERIALIZE_PROPS))
+          historyRef.current = [json]
+          historyIdxRef.current = 0
+          
+          // Save to localStorage
+          if (bid) {
+            localStorage.setItem(`wb_history_${bid}`, JSON.stringify([json]))
+            localStorage.setItem(`wb_history_idx_${bid}`, '0')
+          }
+          
+          // Update button states
+          onHistoryChange?.({ canUndo: false, canRedo: false })
+          console.log('[Whiteboard] Created initial snapshot')
+        } catch (err) {
+          console.warn('[Whiteboard] Failed to create initial snapshot:', err)
+        }
+      }
+      
+      // Auto-center viewport on content for shared boards
+      // If there are objects on the canvas, center the viewport so User 2 can see what's there
+      const objects = canvas.getObjects()
+      console.log('[Whiteboard] After load - objects on canvas:', objects.length, 'Is shared board:', isSharedBoard)
+      
+      if (bid && objects.length > 0 && isSharedBoard) {
+        console.log('[Whiteboard] Auto-centering viewport on content for shared board')
+        // Calculate bounding box of all objects
+        const allCoords = []
+        objects.forEach(obj => {
+          const bounds = obj.getBoundingRect()
+          allCoords.push({ x: bounds.left, y: bounds.top })
+          allCoords.push({ x: bounds.left + bounds.width, y: bounds.top + bounds.height })
+        })
+        
+        if (allCoords.length > 0) {
+          const minX = Math.min(...allCoords.map(c => c.x))
+          const maxX = Math.max(...allCoords.map(c => c.x))
+          const minY = Math.min(...allCoords.map(c => c.y))
+          const maxY = Math.max(...allCoords.map(c => c.y))
+          
+          console.log('[Whiteboard] Content bounds:', { minX, maxX, minY, maxY })
+          
+          const contentWidth = Math.max(maxX - minX, 1)
+          const contentHeight = Math.max(maxY - minY, 1)
+          const contentCenterX = minX + contentWidth / 2
+          const contentCenterY = minY + contentHeight / 2
+          
+          const canvasWidth = canvas.getWidth()
+          const canvasHeight = canvas.getHeight()
+          
+          console.log('[Whiteboard] Content size:', contentWidth, 'x', contentHeight, 'Canvas:', canvasWidth, 'x', canvasHeight)
+          
+          // Calculate zoom to fit content with some padding
+          // Constrain zoom between 0.1 (10%) and 2 (200%)
+          let zoom = Math.min(
+            (canvasWidth * 0.8) / contentWidth,
+            (canvasHeight * 0.8) / contentHeight
+          )
+          zoom = Math.max(0.1, Math.min(2, zoom)) // Clamp between 0.1 and 2
+          
+          console.log('[Whiteboard] Calculated zoom:', zoom)
+          
+          // Center the viewport on the content
+          const vpt = canvas.viewportTransform
+          vpt[0] = zoom
+          vpt[3] = zoom
+          vpt[4] = canvasWidth / 2 - contentCenterX * zoom
+          vpt[5] = canvasHeight / 2 - contentCenterY * zoom
+          
+          console.log('[Whiteboard] Setting viewport transform:', vpt)
+          
+          canvas.setViewportTransform(vpt)
+          canvas.requestRenderAll()
+          
+          console.log('[Whiteboard] Auto-centered viewport. Zoom:', zoom, 'Center:', contentCenterX, contentCenterY)
+        } else {
+          console.warn('[Whiteboard] No coordinates found for auto-centering')
+          canvas.requestRenderAll()
+        }
+      } else if (!isSharedBoard) {
+        // For own boards (not shared), viewport was already restored from localStorage above
+        console.log('[Whiteboard] Using own board viewport')
+        canvas.requestRenderAll()
+      }
+      
+      // Final render to ensure everything is visible
+      setTimeout(() => {
+        if (canvas && canvas.lowerCanvasEl) {
+          console.log('[Whiteboard] Final render check - objects:', canvas.getObjects().length)
+          canvas.requestRenderAll()
+        }
+      }, 100)
+    })
 
     // ── Initialize Ably realtime collaboration ────────────────────────────
     const boardId = resolveBoardId()
@@ -613,66 +1001,101 @@ const Whiteboard = ({
       if (!boardId || realtimeIgnoreRef.current) return
       const canvasJson = canvas.toJSON(SERIALIZE_PROPS)
       const background = canvas.backgroundColor || '#ffffff'
+      
+      // Check message size before broadcasting (Ably limit: 65KB)
+      const messageSize = JSON.stringify({ canvasJson, background }).length
+      const MAX_MESSAGE_SIZE = 60000 // 60KB to be safe
+      
+      if (messageSize > MAX_MESSAGE_SIZE) {
+        console.warn('[Whiteboard] Canvas too large for realtime broadcast:', messageSize, 'bytes. Using database sync only.')
+        // Don't broadcast, just save to database (already happening via serializeCanvas)
+        return
+      }
+      
+      console.log('[Whiteboard] Broadcasting canvas update to collaborators (', messageSize, 'bytes)')
       publishFullCanvas({
         type: 'canvas:full',
         canvasJson,
         background
       })
-    }, 500) // Throttle to 500ms
+    }, 1000) // Increased throttle to 1 second to reduce message frequency
 
     if (boardId) {
       initRealtime(boardId, (msg) => {
         // Received a message from another collaborator
         if (!msg) return
+        
+        console.log('[Whiteboard] Received realtime message:', msg.type)
+        
+        // Use fabricRef.current instead of closure canvas variable
+        const currentCanvas = fabricRef.current
+        
+        // Ensure canvas exists before processing
+        if (!currentCanvas) {
+          console.warn('[Whiteboard] Ignoring realtime message - canvas not available')
+          return
+        }
 
         realtimeIgnoreRef.current = true
 
         // Handle clear canvas broadcast
         if (msg.type === 'canvas:clear') {
+          console.log('[Whiteboard] Processing canvas clear from collaborator')
           const bg = msg.background || '#ffffff'
-          canvas.getObjects().slice().forEach(o => canvas.remove(o))
-          canvas.setBackgroundColor(bg, () => canvas.renderAll())
+          isMutingRef.current = true
+          currentCanvas.getObjects().slice().forEach(o => currentCanvas.remove(o))
+          currentCanvas.setBackgroundColor(bg, () => {
+            if (currentCanvas.lowerCanvasEl) currentCanvas.renderAll()
+          })
+          isMutingRef.current = false
           realtimeIgnoreRef.current = false
           return
         }
 
         // Handle full canvas sync
         if (msg.type === 'canvas:full' && msg.canvasJson) {
-          canvas.loadFromJSON(msg.canvasJson, () => {
-            if (msg.background) {
-              canvas.setBackgroundColor(msg.background, () => {})
-            }
-            // Restore object properties
-            canvas.getObjects().forEach(obj => {
-              obj.set({ selectable: true, evented: true, objectCaching: true, padding: 10 })
-              if (obj.isEraserStroke) obj.set({ selectable: false, evented: false })
-              if (obj.type === 'line') {
-                obj.set({ perPixelTargetFind: true, hasBorders: false })
-                applyLineControls(obj)
-              }
-              // Restore sticky note relationships
-              if (obj.stickyText) {
-                const txt = canvas.getObjects().find(o => o === obj.stickyText)
-                if (txt) {
-                  obj.on('moving', function () {
-                    this.stickyText?.set({ left: this.left + 16, top: this.top + 16 })
-                    this.stickyText?.setCoords()
-                  })
-                  obj.on('scaling', function () {
-                    this.stickyText?.set({ left: this.left + 16, top: this.top + 16 })
-                    this.stickyText?.setCoords()
-                  })
-                  obj.on('rotating', function () {
-                    this.stickyText?.set({ left: this.left + 16, top: this.top + 16 })
-                    this.stickyText?.setCoords()
-                  })
+          console.log('[Whiteboard] Applying canvas update from collaborator, objects count:', msg.canvasJson.objects?.length || 0)
+          const bgToApply = msg.background
+          loadJsonIntoCanvas(currentCanvas, msg.canvasJson, isMutingRef, () => {
+            if (bgToApply && currentCanvas.lowerCanvasEl) {
+              currentCanvas.setBackgroundColor(bgToApply, () => {
+                if (currentCanvas.lowerCanvasEl) {
+                  currentCanvas.requestRenderAll()
+                  // Force another render after a short delay to ensure visibility
+                  setTimeout(() => {
+                    if (currentCanvas.lowerCanvasEl) currentCanvas.requestRenderAll()
+                  }, 50)
                 }
-              }
-              obj.setCoords()
-            })
-            canvas.renderAll()
+              })
+            } else if (currentCanvas.lowerCanvasEl) {
+              currentCanvas.requestRenderAll()
+              // Force another render after a short delay to ensure visibility
+              setTimeout(() => {
+                if (currentCanvas.lowerCanvasEl) currentCanvas.requestRenderAll()
+              }, 50)
+            }
+            console.log('[Whiteboard] Canvas update applied successfully. Objects on canvas:', currentCanvas.getObjects().length)
+            console.log('[Whiteboard] Canvas dimensions:', currentCanvas.getWidth(), 'x', currentCanvas.getHeight())
             realtimeIgnoreRef.current = false
           })
+          return
+        }
+
+        // Handle sync request from a new collaborator
+        if (msg.type === 'sync:request') {
+          console.log('[Whiteboard] Received sync request - broadcasting current canvas')
+          // Send our current canvas state to help the requester
+          const currentCanvas = fabricRef.current
+          if (currentCanvas && currentCanvas.lowerCanvasEl) {
+            const canvasJson = currentCanvas.toJSON(SERIALIZE_PROPS)
+            const background = currentCanvas.backgroundColor || '#ffffff'
+            publishFullCanvas({
+              type: 'canvas:full',
+              canvasJson,
+              background
+            })
+          }
+          realtimeIgnoreRef.current = false
           return
         }
 
@@ -682,7 +1105,13 @@ const Whiteboard = ({
 
     // ── Canvas mutation handler: save + broadcast ─────────────────────────
     const onMutation = () => {
+      // Don't create history entries until initial load is complete
+      if (!isLoadedRef.current) return
       if (isMutingRef.current || isDrawingRef.current || realtimeIgnoreRef.current) return
+      
+      // Track that we made a local change
+      lastLocalChangeRef.current = Date.now()
+      
       serializeCanvas(canvas)
       pushSnapshot()
       // Broadcast full canvas to collaborators
@@ -732,7 +1161,7 @@ const Whiteboard = ({
     }
 
     const updateTextBarPos = (obj) => {
-      if (!obj || (obj.type !== 'i-text' && obj.type !== 'textbox')) {
+      if (!obj || (obj.type !== 'i-text' && obj.type !== 'textbox') || typeof obj.getBoundingRect !== 'function') {
         setTextBarPosition(null)
         return
       }
@@ -770,16 +1199,34 @@ const Whiteboard = ({
       highlightLines([])
     })
 
+    // Track when user is editing text to prevent database polling from interrupting
+    canvas.on('text:editing:entered', () => {
+      console.log('[Whiteboard] Text editing started - pausing database sync')
+      isEditingTextRef.current = true
+      lastLocalChangeRef.current = Date.now()
+    })
+    canvas.on('text:editing:exited', () => {
+      console.log('[Whiteboard] Text editing finished - resuming database sync')
+      isEditingTextRef.current = false
+      lastLocalChangeRef.current = Date.now()
+    })
+
     canvas.on('object:moving', (e) => {
+      // Track movement to prevent database polling during drag
+      lastLocalChangeRef.current = Date.now()
+      
       const obj = e.target
       if (obj && (obj.type === 'i-text' || obj.type === 'textbox')) {
         updateTextBarPos(obj)
       }
-      if (obj && obj.stickyText) {
+      if (obj && obj.stickyText && typeof obj.stickyText.getBoundingRect === 'function') {
         updateTextBarPos(obj.stickyText)
       }
     })
     canvas.on('object:scaling', (e) => {
+      // Track scaling to prevent database polling during scale
+      lastLocalChangeRef.current = Date.now()
+      
       const obj = e.target
       if (obj && (obj.type === 'i-text' || obj.type === 'textbox')) {
         updateTextBarPos(obj)
@@ -859,75 +1306,62 @@ const Whiteboard = ({
     container.addEventListener('pointercancel', stopPan, { passive: true })
     // ──────────────────────────────────────────────────────────────────────
 
-    // Capture the desktop (home) size once at mount. Never overwrite.
-    const homeW = container.clientWidth
-    const homeH = container.clientHeight
-
     const resizeObserver = new ResizeObserver((entries) => {
       for (const { contentRect: { width, height } } of entries) {
         if (width === 0 || height === 0) continue
-
         canvas.setDimensions({ width, height })
-
-        const objs = canvas.getObjects()
-
-        if (objs.length === 0) {
-          // Nothing to show — just use identity
-          canvas.setViewportTransform([1, 0, 0, 1, 0, 0])
-          canvas.renderAll()
-          continue
-        }
-
-        // ── Measure object bounds in TRUE canvas coordinates ──────────────
-        // We must reset the viewport to identity first so getBoundingRect
-        // returns raw canvas coords, not screen-pixel coords.
-        canvas.setViewportTransform([1, 0, 0, 1, 0, 0])
-
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-        objs.forEach(obj => {
-          obj.setCoords()
-          const br = obj.getBoundingRect(true, true)
-          minX = Math.min(minX, br.left)
-          minY = Math.min(minY, br.top)
-          maxX = Math.max(maxX, br.left + br.width)
-          maxY = Math.max(maxY, br.top + br.height)
-        })
-
-        const isFullSize = width >= homeW - 2 && height >= homeH - 2
-
-        if (isFullSize) {
-          // Back to desktop — identity viewport, objects at their original positions
-          canvas.setViewportTransform([1, 0, 0, 1, 0, 0])
-        } else {
-          // Smaller screen — zoom-to-fit all objects centred with padding
-          const padding = 32
-          const contentW = maxX - minX + padding * 2
-          const contentH = maxY - minY + padding * 2
-          const zoom = Math.min(width / contentW, height / contentH, 1)
-          const panX = (width - (maxX + minX) * zoom) / 2
-          const panY = (height - (maxY + minY) * zoom) / 2
-          canvas.setViewportTransform([zoom, 0, 0, zoom, panX, panY])
-        }
-
         canvas.renderAll()
       }
     })
     resizeObserver.observe(container)
+
+    // ── Mouse wheel: scroll to pan, ctrl+wheel to zoom ────────────────────
+    const onWheel = (e) => {
+      e.preventDefault()
+      if (e.ctrlKey || e.metaKey) {
+        // Zoom around cursor position
+        let zoom = canvas.getZoom()
+        zoom *= 0.999 ** e.deltaY
+        zoom = Math.min(Math.max(0.1, zoom), 20)
+        canvas.zoomToPoint(new fabric.Point(e.offsetX, e.offsetY), zoom)
+      } else {
+        // Pan / scroll
+        const vpt = canvas.viewportTransform.slice()
+        vpt[4] -= e.deltaX
+        vpt[5] -= e.deltaY
+        canvas.setViewportTransform(vpt)
+      }
+      // Save viewport transform to localStorage
+      const bid = resolveBoardId()
+      if (bid) {
+        localStorage.setItem(`wb_viewport_${bid}`, JSON.stringify(canvas.viewportTransform))
+      }
+      canvas.renderAll()
+    }
+    container.addEventListener('wheel', onWheel, { passive: false })
+
     const onBeforeUnload = () => {
-      // Force immediate save by calling saveBoard directly
-      const boardId = resolveBoardId()
-      if (boardId) {
+      // Use fetch with keepalive for guaranteed delivery on page close
+      const bid = resolveBoardId()
+      if (bid) {
         const json = canvas.toJSON(SERIALIZE_PROPS)
         const background = canvas.backgroundColor || '#ffffff'
-        saveBoard(boardId, { canvasJson: json, background }).catch(err => {
-          console.warn('[Whiteboard] Final save failed:', err)
-        })
+        const BASE_URL = import.meta.env.VITE_API_URL || ''
+        const token = localStorage.getItem('wb_jwt')
+        fetch(`${BASE_URL}/api/boards/${bid}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({ canvasJson: json, background }),
+          keepalive: true,
+        }).catch(() => {})
       }
       disconnectRealtime()
     }
     window.addEventListener('beforeunload', onBeforeUnload)
 
     return () => {
+      mountedRef.current = false
+      disconnectRealtime() // Disconnect Ably to prevent callback after unmount
       fabric.Textbox.prototype._render = origTextboxRender
       fabric.IText.prototype._render = origITextRender
       ctxEl?.removeEventListener('contextmenu', handleContextMenu)
@@ -935,6 +1369,7 @@ const Whiteboard = ({
       container.removeEventListener('pointermove', onPanPointerMove)
       container.removeEventListener('pointerup', stopPan)
       container.removeEventListener('pointercancel', stopPan)
+      container.removeEventListener('wheel', onWheel)
       resizeObserver.disconnect()
       window.removeEventListener('beforeunload', onBeforeUnload)
       canvas.dispose()
@@ -1023,7 +1458,7 @@ const Whiteboard = ({
             c.add(cl)
             c.setActiveObject(cl)
             snap()
-          }, ['stickyText', 'stickyRect', 'isPlaceholder', 'placeholderText'])
+          }, ['isPlaceholder', 'placeholderText', 'isStickyNote', 'isStickyText'])
         }
       },
       { divider: true },
@@ -1050,11 +1485,14 @@ const Whiteboard = ({
   useEffect(() => {
     const canvas = fabricRef.current
     if (!canvas) return
+    if (!canvas.lowerCanvasEl || !canvas.wrapperEl) return
     canvas.setBackgroundColor(canvasBackground || '#ffffff', () => {
+      if (!canvas.lowerCanvasEl || !canvas.wrapperEl) return
       canvas.getObjects().forEach(obj => { if (obj.isEraserStroke) obj.set('stroke', canvasBackground) })
       canvas.renderAll()
       localStorage.setItem('wb_background_v2', canvasBackground)
-      serializeCanvas(canvas)
+      // Only save back to DB if the board is fully loaded (avoid overwriting DB data on initial sync)
+      if (isLoadedRef.current) serializeCanvas(canvas)
     })
   }, [canvasBackground])
 
@@ -1264,7 +1702,12 @@ const Whiteboard = ({
           t.isPlaceholder = true
           t.placeholderText = PLACEHOLDER
           t.on('editing:entered', function () { canvas.renderAll() })
-          t.on('editing:exited', function () { this.isPlaceholder = (this.text.trim() === ''); canvas.renderAll() })
+          t.on('editing:exited', function () { 
+            this.isPlaceholder = (this.text.trim() === '')
+            canvas.renderAll()
+            // Fire object:modified to trigger save and broadcast
+            canvas.fire('object:modified', { target: this })
+          })
           t.on('changed', function () { this.isPlaceholder = (this.text.trim() === ''); canvas.renderAll() })
           canvas.add(t)
           canvas.setActiveObject(t)
@@ -1294,6 +1737,7 @@ const Whiteboard = ({
             rx: 8, ry: 8,
             shadow: new fabric.Shadow({ color: 'rgba(0,0,0,.10)', blur: 12, offsetX: 2, offsetY: 4 }),
             selectable: true, evented: true,
+            isStickyNote: true, // Marker for identifying after deserialization
           })
           const txt = new fabric.Textbox('', {
             left: ptr.x + 16, top: ptr.y + 16, width: W - 32,
@@ -1301,6 +1745,7 @@ const Whiteboard = ({
             fill: '#333', textAlign: 'left',
             editable: true, selectable: true, evented: true,
             hasControls: false, hasBorders: false,
+            isStickyText: true, // Marker for identifying after deserialization
           })
           txt.isPlaceholder = true
           txt.placeholderText = 'Note…'
@@ -1309,8 +1754,20 @@ const Whiteboard = ({
           rect.on('moving', function () { this.stickyText?.set({ left: this.left + 16, top: this.top + 16 }); this.stickyText?.setCoords() })
           rect.on('scaling', function () { this.stickyText?.set({ left: this.left + 16, top: this.top + 16 }); this.stickyText?.setCoords() })
           rect.on('rotating', function () { this.stickyText?.set({ left: this.left + 16, top: this.top + 16 }); this.stickyText?.setCoords() })
+          // When rect finishes moving, ensure text position is finalized
+          rect.on('modified', function () {
+            if (this.stickyText) {
+              this.stickyText.set({ left: this.left + 16, top: this.top + 16 })
+              this.stickyText.setCoords()
+            }
+          })
           txt.on('editing:entered', function () { canvas.renderAll() })
-          txt.on('editing:exited', function () { this.isPlaceholder = (this.text.trim() === ''); canvas.renderAll() })
+          txt.on('editing:exited', function () { 
+            this.isPlaceholder = (this.text.trim() === '')
+            canvas.renderAll()
+            // Fire object:modified to trigger save and broadcast
+            canvas.fire('object:modified', { target: this })
+          })
           txt.on('changed', function () { this.isPlaceholder = (this.text.trim() === ''); canvas.renderAll() })
           canvas.add(rect)
           canvas.add(txt)
@@ -1420,12 +1877,12 @@ const Whiteboard = ({
         // We do this here (instead of relying on object:added/object:modified)
         // because those events fire while isDrawingRef.current is still true
         // (the shape is still being stretched) so the onMutation guard blocks them.
-        if (!realtimeIgnoreRef.current && boardId && finishedShape) {
-          const obj = finishedShape
-          if (!obj.realtimeId) obj.realtimeId = `obj_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-          const delta = obj.toJSON(SERIALIZE_PROPS)
-          delta.realtimeId = obj.realtimeId
-          publishDelta({ type: 'canvas:delta', payload: delta })
+        if (!realtimeIgnoreRef.current && finishedShape) {
+          const currentBoardId = resolveBoardId()
+          if (currentBoardId) {
+            console.log('[Whiteboard] Broadcasting newly drawn shape to collaborators')
+            publishFullCanvas({ type: 'canvas:full', canvasJson: canvas.toJSON(SERIALIZE_PROPS), background: canvas.backgroundColor || '#ffffff' })
+          }
         }
       }
     }

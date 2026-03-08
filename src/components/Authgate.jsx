@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { getMe, setToken, clearToken, getToken, shareBoard } from '../services/api'
-import './AuthGate.css'
+import './Authgate.css'
 
 const SESSION_KEY = 'wb_session_v1' // kept for name/email cache only
 

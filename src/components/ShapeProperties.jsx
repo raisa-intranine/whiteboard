@@ -78,6 +78,12 @@ const ShapeProperties = ({ canvas, selectedObject }) => {
     selectedObject.set(props)
     selectedObject.setCoords()
     canvas.renderAll()
+    // Use requestAnimationFrame to ensure the render completes before firing the event
+    // This ensures the snapshot captures the updated state
+    requestAnimationFrame(() => {
+      // Fire object:modified event to trigger history snapshot, database save, and realtime broadcast
+      canvas.fire('object:modified', { target: selectedObject })
+    })
   }
 
   const handleStrokeColor  = (c) => { setStrokeColor(c);  apply({ stroke: c }) }
