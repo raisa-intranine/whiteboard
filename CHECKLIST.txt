@@ -1,0 +1,147 @@
+═══════════════════════════════════════════════════════════
+  FIREBASE MIGRATION - TESTING CHECKLIST
+═══════════════════════════════════════════════════════════
+
+PROJECT: even-affinity-471618-n9
+STATUS: Code migration complete ✓
+NEXT: Enable Firebase services and test
+
+───────────────────────────────────────────────────────────
+  FIREBASE CONSOLE SETUP (5 minutes)
+───────────────────────────────────────────────────────────
+
+□ Go to: https://console.firebase.google.com/
+□ Select project: even-affinity-471618-n9
+
+□ Enable Firestore:
+  □ Click "Firestore Database"
+  □ Click "Create database"
+  □ Select "Start in test mode"
+  □ Choose a location
+  □ Click "Enable"
+
+□ Enable Authentication:
+  □ Click "Authentication"
+  □ Click "Get started"
+  □ Enable "Google" provider
+  □ Enable "Email/Password" provider
+
+□ Add Authorized Domain:
+  □ Authentication → Settings tab
+  □ Scroll to "Authorized domains"
+  □ Add "localhost"
+
+───────────────────────────────────────────────────────────
+  RUN THE APP
+───────────────────────────────────────────────────────────
+
+□ Run: npm run dev
+□ Open: http://localhost:5173
+
+───────────────────────────────────────────────────────────
+  TEST AUTHENTICATION
+───────────────────────────────────────────────────────────
+
+□ Sign in with Google works
+□ Sign up with email works
+□ Sign in with email works
+□ Sign out works
+□ Refresh page - stays signed in
+
+───────────────────────────────────────────────────────────
+  TEST BASIC FEATURES
+───────────────────────────────────────────────────────────
+
+□ Can draw on canvas
+□ Can select and move objects
+□ Can change colors
+□ Can change stroke width
+□ Can use different tools
+□ Can undo/redo
+□ Can clear canvas
+
+───────────────────────────────────────────────────────────
+  TEST REAL-TIME SYNC
+───────────────────────────────────────────────────────────
+
+□ Open app in two tabs (same account)
+□ Draw in one tab
+□ See it appear in other tab immediately
+□ Both tabs stay in sync
+
+───────────────────────────────────────────────────────────
+  TEST SESSIONS
+───────────────────────────────────────────────────────────
+
+□ Click session dropdown (📋 button)
+□ Create a new session
+□ Switch between sessions
+□ Each session has its own canvas
+□ Delete a session
+
+───────────────────────────────────────────────────────────
+  TEST COLLABORATION
+───────────────────────────────────────────────────────────
+
+□ Open in two browsers (different accounts)
+□ Both can draw
+□ See each other's changes in real-time
+□ See presence indicators (avatars)
+□ Share board with collaborator
+□ Remove collaborator
+
+───────────────────────────────────────────────────────────
+  AFTER TESTING
+───────────────────────────────────────────────────────────
+
+□ Add security rules (see FIREBASE_MIGRATION.md)
+□ Delete backend folder: rm -rf backend
+□ Delete old services: rm src/services/api.js src/services/realtime.js
+□ Update README.md
+□ Deploy to production
+
+───────────────────────────────────────────────────────────
+  DEPLOYMENT OPTIONS
+───────────────────────────────────────────────────────────
+
+□ Firebase Hosting (recommended)
+□ Netlify
+□ Vercel
+□ Any static hosting
+
+───────────────────────────────────────────────────────────
+  HELPFUL COMMANDS
+───────────────────────────────────────────────────────────
+
+Development:  npm run dev
+Build:        npm run build
+Preview:      npm run preview
+
+───────────────────────────────────────────────────────────
+  HELPFUL DOCUMENTS
+───────────────────────────────────────────────────────────
+
+Quick Start:  QUICK_START.md (⭐ Start here!)
+Testing:      TEST_NOW.md
+Visual Guide: VISUAL_GUIDE.md
+Reference:    QUICK_REFERENCE.md
+Architecture: ARCHITECTURE.md
+
+───────────────────────────────────────────────────────────
+  TROUBLESHOOTING
+───────────────────────────────────────────────────────────
+
+Error: "auth/unauthorized-domain"
+Fix: Add localhost to authorized domains
+
+Error: "Missing or insufficient permissions"
+Fix: Use test mode in Firestore
+
+Real-time not working:
+Fix: Check Firestore is enabled, refresh both tabs
+
+───────────────────────────────────────────────────────────
+
+Need help? Just ask!
+
+═══════════════════════════════════════════════════════════

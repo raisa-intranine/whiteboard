@@ -1,0 +1,93 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user owns the board
+    function isOwner(boardId) {
+      return isSignedIn() && get(/databases/$(database)/documents/boards/$(boardId)).data.ownerId == request.auth.uid;
+    }
+    
+    // Helper function to check if user is a collaborator
+    function isCollaborator(boardId) {
+      return isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/boards/$(boardId)).data.collaborators;
+    }
+    
+    // Helper function to check if board is public
+    function isPublic(boardId) {
+      return get(/databases/$(database)/documents/boards/$(boardId)).data.isPublic == true;
+    }
+    
+    // Helper function to check if user has access to board
+    function hasAccess(boardId) {
+      return isOwner(boardId) || isCollaborator(boardId) || isPublic(boardId);
+    }
+    
+    // Helper function to check if user has access to a session
+    function hasSessionAccess(boardId, sessionData) {
+      // Must have board access first
+      if (!hasAccess(boardId)) return false;
+      
+      // User must be creator or explicitly added as collaborator
+      return sessionData.creatorId == request.auth.uid || 
+             request.auth.uid in sessionData.collaborators;
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == userId;
+    }
+    
+    // Boards collection
+    match /boards/{boardId} {
+      allow read: if hasAccess(boardId);
+      allow create: if isSignedIn();
+      allow update: if isOwner(boardId) || isCollaborator(boardId);
+      allow delete: if isOwner(boardId);
+      
+      // Presence subcollection
+      match /presence/{userId} {
+        allow read: if hasAccess(boardId);
+        allow write: if isSignedIn() && request.auth.uid == userId;
+      }
+      
+      // Invites subcollection
+      match /invites/{inviteId} {
+        allow read: if hasAccess(boardId);
+        allow write: if isOwner(boardId);
+      }
+      
+      // Sessions subcollection
+      match /sessions/{sessionId} {
+        allow read: if hasAccess(boardId) && hasSessionAccess(boardId, resource.data);
+        allow create: if hasAccess(boardId);
+        allow update: if hasAccess(boardId) && hasSessionAccess(boardId, resource.data);
+        allow delete: if isOwner(boardId) || resource.data.creatorId == request.auth.uid;
+        
+        // Session-specific presence (only users in this session)
+        match /presence/{userId} {
+          allow read: if hasAccess(boardId);
+          allow write: if isSignedIn() && request.auth.uid == userId;
+        }
+        
+        // User history subcollection (per-user undo/redo)
+        match /userHistory/{historyId} {
+          allow read: if hasAccess(boardId);
+          allow write: if hasAccess(boardId);
+          allow delete: if hasAccess(boardId);
+        }
+        
+        // Session invites
+        match /invites/{inviteId} {
+          allow read: if hasAccess(boardId);
+          allow write: if isOwner(boardId);
+        }
+      }
+    }
+  }
+}
