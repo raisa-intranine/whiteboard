@@ -23,7 +23,7 @@ const { shareBoard } = require('./api/boards/share')
 const { getCollaborators, removeCollaborator } = require('./api/boards/collaborators')
 const { searchUsers } = require('./api/users/search')
 const { getRealtimeToken } = require('./api/realtime/token')
-const { listSessions, createSession, getSession, updateSession, activateSession, deleteSession } = require('./api/boards/sessions')
+const { listSessions, createSession, getSession, updateSession, activateSession, deleteSession } = require('./api/boards/session')
 const { getHistory, saveHistory, clearHistory } = require('./api/boards/history')
 const { shareSession, getSessionCollaborators, removeSessionCollaborator, toggleSessionPrivacy } = require('./api/boards/session-share')
 
