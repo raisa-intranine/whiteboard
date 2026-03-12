@@ -28,13 +28,31 @@ const getRealtimeToken = async (req, res) => {
         // Accept a targeted boardId from query params so guests can join via URL
         // Fallback to the user's own board
         const requestedBoardId = req.query.boardId || payload.boardId
+        const sessionId = req.query.sessionId
         const boardChannel = `board:${requestedBoardId}`
+        const sessionChannel = sessionId ? `board:${requestedBoardId}:session:${sessionId}` : null
+
+        // Use userId + random suffix so each browser tab/device gets a unique clientId.
+        // This allows the same user account to appear once per connection rather than
+        // being filtered out as "own presence" by the other side.
+        const uniqueClientId = `${payload.userId}:${Math.random().toString(36).slice(2, 10)}`
+
+        console.log('[realtime/token] Creating token for user:', payload.email)
+        console.log('[realtime/token]   - clientId:', uniqueClientId)
+        console.log('[realtime/token]   - boardId:', requestedBoardId)
+        console.log('[realtime/token]   - sessionId:', sessionId || '(none)')
+        console.log('[realtime/token]   - channels:', sessionChannel ? [boardChannel, sessionChannel] : [boardChannel])
+
+        const capability = {
+            [boardChannel]: ['publish', 'subscribe', 'presence'],
+        }
+        if (sessionChannel) {
+            capability[sessionChannel] = ['publish', 'subscribe', 'presence']
+        }
 
         const tokenParams = {
-            clientId: payload.userId,
-            capability: {
-                [boardChannel]: ['publish', 'subscribe', 'presence'],
-            },
+            clientId: uniqueClientId,
+            capability,
             ttl: 3600 * 1000,
         }
 

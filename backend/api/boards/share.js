@@ -8,6 +8,7 @@
 
 const pool = require('../../lib/db')
 const { requireAuth } = require('../../lib/middleware')
+const { sendBoardInvitation } = require('../../lib/email')
 
 const shareBoard = async (req, res) => {
     const boardId = req.params.boardId
@@ -32,6 +33,13 @@ const shareBoard = async (req, res) => {
             return res.status(403).json({ error: 'You do not own this board' })
         }
 
+        // Get owner info for email
+        const ownerInfo = await pool.query(
+            `SELECT name, email FROM users WHERE id = $1`,
+            [payload.userId]
+        )
+        const inviter = ownerInfo.rows[0]
+
         // Mark board as public
         await pool.query(
             `UPDATE boards SET is_public = true, updated_at = now() WHERE id = $1`,
@@ -42,7 +50,7 @@ const shareBoard = async (req, res) => {
         const { email } = req.body || {}
         if (email) {
             const userResult = await pool.query(
-                `SELECT id FROM users WHERE email = $1`,
+                `SELECT id, name, email FROM users WHERE email = $1`,
                 [email.trim().toLowerCase()]
             )
             if (userResult.rows.length === 0) {
@@ -54,21 +62,42 @@ const shareBoard = async (req, res) => {
                 })
             }
 
-            const collaboratorId = userResult.rows[0].id
+            const collaborator = userResult.rows[0]
+            let emailSent = false
+            
             // Don't add the owner as a collaborator
-            if (collaboratorId !== payload.userId) {
+            if (collaborator.id !== payload.userId) {
                 await pool.query(
                     `INSERT INTO board_permissions (board_id, user_id, role)
                      VALUES ($1, $2, 'editor')
                      ON CONFLICT (board_id, user_id) DO NOTHING`,
-                    [boardId, collaboratorId]
+                    [boardId, collaborator.id]
                 )
+
+                // Send email invitation (optional - gracefully handle missing SMTP config)
+                try {
+                    const boardUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}?board=${boardId}`
+                    await sendBoardInvitation({
+                        to: collaborator.email,
+                        boardId,
+                        boardUrl,
+                        inviterName: inviter.name,
+                        inviterEmail: inviter.email,
+                    })
+                    emailSent = true
+                    console.log('[boards/share] Email invitation sent to', collaborator.email)
+                } catch (emailErr) {
+                    console.warn('[boards/share] Failed to send email invitation:', emailErr.message)
+                    console.warn('[boards/share] Collaborator was added successfully, but email notification failed')
+                    // Don't fail the request - collaborator was added successfully
+                }
             }
 
             return res.status(200).json({
                 ok: true,
                 isPublic: true,
                 collaboratorAdded: email,
+                emailSent,
             })
         }
 

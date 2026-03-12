@@ -409,35 +409,6 @@
   gap: 10px;
 }
 
-/* Share button */
-.ag-share-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--accent-light);
-  border: 1px solid rgba(26, 115, 232, 0.2);
-  border-radius: var(--radius-md);
-  padding: 6px 13px;
-  font-family: var(--font);
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--accent);
-  cursor: pointer;
-  transition: all var(--transition);
-}
-
-.ag-share-btn:hover {
-  background: #d2e3fc;
-  border-color: rgba(26, 115, 232, 0.35);
-  color: var(--accent-hover);
-}
-
-.ag-share-btn.copied {
-  background: #e6f4ea;
-  border-color: rgba(52, 168, 83, 0.3);
-  color: var(--success);
-}
-
 /* Avatar */
 .ag-avatar {
   width: 30px;
@@ -585,24 +556,6 @@
 
 .ag-topbar.dark .ag-topbar-brand {
   color: #e3e3e3;
-}
-
-.ag-topbar.dark .ag-share-btn {
-  background: #1a2e48;
-  border-color: rgba(123, 170, 247, 0.2);
-  color: #7baaf7;
-}
-
-.ag-topbar.dark .ag-share-btn:hover {
-  background: #243a56;
-  border-color: rgba(123, 170, 247, 0.35);
-  color: #8ab4f8;
-}
-
-.ag-topbar.dark .ag-share-btn.copied {
-  background: #1e3a2e;
-  border-color: rgba(52, 168, 83, 0.3);
-  color: #81c995;
 }
 
 .ag-topbar.dark .ag-profile-dropdown {

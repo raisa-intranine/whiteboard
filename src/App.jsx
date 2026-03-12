@@ -4,9 +4,12 @@ import Whiteboard from './components/Whiteboard'
 import Toolbar from './components/Toolbar'
 import Sidebar from './components/Sidebar'
 import ConfirmDialog from './components/Confirmdialog'
+import MermaidModal from './components/MermaidModal'
 import './App.css'
 
 function App() {
+  console.log('[App] Component render')
+  
   const [tool, setTool] = useState(() => localStorage.getItem('wb_tool') || 'select')
   const getSystemTheme = () => {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
@@ -76,6 +79,29 @@ function App() {
   const [canUndo, setCanUndo] = useState(false)
   const [canRedo, setCanRedo] = useState(false)
   const [confirmVisible, setConfirmVisible] = useState(false)
+  const [boardId, setBoardId] = useState(null)
+  const [currentSessionId, setCurrentSessionId] = useState(null)
+  const [mermaidVisible, setMermaidVisible] = useState(false)
+  const [mermaidMode, setMermaidMode] = useState('create')
+  
+  // Sync URL with session changes
+  useEffect(() => {
+    if (boardId && currentSessionId) {
+      const params = new URLSearchParams(window.location.search)
+      const urlBoard = params.get('board')
+      const urlSession = params.get('session')
+      
+      // Update URL if it doesn't match current state
+      if (urlBoard !== boardId || urlSession !== currentSessionId) {
+        params.set('board', boardId)
+        params.set('session', currentSessionId)
+        const newUrl = `${window.location.pathname}?${params.toString()}`
+        window.history.replaceState({}, '', newUrl)
+        console.log('[App] Updated URL with session:', currentSessionId)
+      }
+    }
+  }, [boardId, currentSessionId])
+  
   useEffect(() => {
     if (themeSetting !== 'auto') return
 
@@ -114,8 +140,46 @@ function App() {
     setConfirmVisible(false)
   }
 
+  const handleSessionChange = (session) => {
+    console.log('[App] ========== SESSION CHANGE ==========')
+    console.log('[App] New session:', session.id, session.name)
+    console.log('[App] Old session:', currentSessionId)
+    console.log('[App] Board ID:', boardId)
+    
+    setCurrentSessionId(session.id)
+    
+    // Reload canvas for new session (pass session ID directly)
+    if (window.__wbLoadSession) {
+      console.log('[App] Calling window.__wbLoadSession with:', session.id)
+      window.__wbLoadSession(session.id)
+    } else {
+      console.error('[App] window.__wbLoadSession is not defined!')
+    }
+    
+    console.log('[App] ========================================')
+  }
+
+  const handleShowMermaid = (mode) => {
+    setMermaidMode(mode)
+    setMermaidVisible(true)
+  }
+
+  // Set up global function for Mermaid modal
+  useEffect(() => {
+    window.__wbShowMermaid = handleShowMermaid
+    return () => {
+      delete window.__wbShowMermaid
+    }
+  }, [])
+
   return (
-    <AuthGate theme={theme}>
+    <AuthGate 
+      theme={theme} 
+      boardId={boardId} 
+      currentSessionId={currentSessionId} 
+      onSessionChange={handleSessionChange}
+    >
+      {({ user }) => (
       <div className={`app ${theme}`}>
         <Toolbar
           tool={tool}
@@ -165,6 +229,10 @@ function App() {
             fillShape={fillShape}
             onHistoryChange={handleHistoryChange}
             theme={theme}
+            onBoardIdChange={setBoardId}
+            currentSessionId={currentSessionId}
+            onSessionIdChange={setCurrentSessionId}
+            user={user}
           />
         </div>
 
@@ -178,7 +246,16 @@ function App() {
           onConfirm={handleConfirmClear}
           onCancel={handleCancelClear}
         />
+
+        <MermaidModal
+          visible={mermaidVisible}
+          onClose={() => setMermaidVisible(false)}
+          canvas={canvasRef}
+          theme={theme}
+          mode={mermaidMode}
+        />
       </div>
+      )}
     </AuthGate>
   )
 }

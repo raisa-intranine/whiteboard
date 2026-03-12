@@ -2,14 +2,17 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { fabric } from 'fabric'
 import ShapeProperties from './ShapeProperties'
 import LaserPointer from './Laserpointer'
+import PresenceIndicators from './PresenceIndicators'
 import './Whiteboard.css'
-import { loadBoard, saveBoard } from '../services/api'
-import { initRealtime, publishFullCanvas, publishClear, disconnectRealtime, requestSync } from '../services/realtime'
+import { loadBoard, saveBoard, getSession, updateSession } from '../services/api'
+import { initRealtime, publishFullCanvas, publishClear, disconnectRealtime, requestSync, enterPresence, updatePresence, publishCursorMove, onViewportSync, publishViewportSync } from '../services/realtime'
 
 const SHAPE_TYPES = ['rect', 'circle', 'triangle', 'polygon', 'ellipse', 'group', 'i-text', 'textbox', 'image']
 const FONTS = ['DM Sans', 'Arial', 'Georgia', 'Courier New', 'Verdana', 'Times New Roman', 'Trebuchet MS']
 
 const SERIALIZE_PROPS = [
+  'id', // Unique identifier for merge conflict resolution
+  'createdBy', // User email who created this object (for per-user undo/redo)
   'selectable', 'evented',
   'perPixelTargetFind', 'strokeUniform', 'hasControls', 'hasBorders',
   'shadow', 'rx', 'ry', 'isEraserStroke', 'isFrame', 'src', 'crossOrigin',
@@ -65,29 +68,158 @@ const resolveBoardId = () => {
   }
 }
 
-// Save canvas to Neon database only
-const saveToBoardApi = debounce(async (boardId, canvasJson, background) => {
-  try {
-    await saveBoard(boardId, { canvasJson, background })
-  } catch (err) {
-    console.warn('[Whiteboard] Backend save failed:', err.message)
-  }
-}, 2000)
+const resolveSessionId = () => {
+  // Check URL for shared session
+  const params = new URLSearchParams(window.location.search)
+  const sharedSessionId = params.get('session')
+  return sharedSessionId || null
+}
 
-const serializeCanvas = (canvas) => {
+// Save canvas to Neon database (session-specific)
+const saveToSessionApi = debounce(async (boardId, sessionId, canvasJson, background) => {
+  try {
+    if (!sessionId) {
+      console.warn('[saveToSessionApi] No sessionId - cannot save')
+      return
+    }
+    console.log('[saveToSessionApi] Saving to session:', sessionId, 'Objects:', canvasJson?.objects?.length || 0)
+    await updateSession(boardId, sessionId, { canvasJson, background })
+    console.log('[saveToSessionApi] Save successful')
+  } catch (err) {
+    console.warn('[saveToSessionApi] Session save failed:', err.message)
+  }
+}, 300) // Reduced to 300ms for faster database saves and real-time feel
+
+// Immediate save (no debounce) for critical operations like clear
+const saveToSessionImmediate = async (boardId, sessionId, canvasJson, background) => {
+  try {
+    if (!sessionId) {
+      console.warn('[saveToSessionImmediate] No sessionId - cannot save')
+      return
+    }
+    console.log('[saveToSessionImmediate] Saving to session:', sessionId, 'Objects:', canvasJson?.objects?.length || 0)
+    await updateSession(boardId, sessionId, { canvasJson, background })
+    console.log('[saveToSessionImmediate] Save successful')
+  } catch (err) {
+    console.warn('[saveToSessionImmediate] Session save failed:', err.message)
+  }
+}
+
+const serializeCanvas = (canvas, sessionIdRef) => {
   try {
     const json = canvas.toJSON(SERIALIZE_PROPS)
     const boardId = resolveBoardId()
+    const sessionId = sessionIdRef.current
 
-    if (boardId) {
-      // Save to Neon database
-      saveToBoardApi(boardId, json, canvas.backgroundColor || '#ffffff')
+    if (boardId && sessionId) {
+      // Save to session in database
+      saveToSessionApi(boardId, sessionId, json, canvas.backgroundColor || '#ffffff')
     } else {
-      console.warn('[Whiteboard] No boardId found - user not authenticated')
+      console.warn('[Whiteboard] No boardId or sessionId found - cannot save')
     }
   } catch (err) {
     console.warn('[Whiteboard] Save failed:', err)
   }
+}
+
+// Helper: merge objects by ID to handle concurrent edits without data loss
+const mergeCanvasObjects = (canvas, newCanvasJson, isMutingRef, onDone) => {
+  if (!canvas || !canvas.lowerCanvasEl) {
+    if (onDone) onDone()
+    return
+  }
+  
+  if (isMutingRef) isMutingRef.current = true
+  
+  const currentObjects = canvas.getObjects()
+  const newObjects = newCanvasJson.objects || []
+  
+  // Build a map of current objects by ID
+  const currentMap = {}
+  currentObjects.forEach(obj => {
+    if (obj.id) {
+      currentMap[obj.id] = obj
+    }
+  })
+  
+  // Build a map of new objects by ID
+  const newMap = {}
+  newObjects.forEach(obj => {
+    if (obj.id) {
+      newMap[obj.id] = obj
+    }
+  })
+  
+  let addedCount = 0
+  let updatedCount = 0
+  let removedCount = 0
+  
+  // Remove objects that are in current canvas but NOT in new canvas
+  // This handles undo/delete operations from other users
+  const objectsToRemove = []
+  currentObjects.forEach(obj => {
+    if (obj.id && !newMap[obj.id]) {
+      objectsToRemove.push(obj)
+    }
+  })
+  
+  objectsToRemove.forEach(obj => {
+    console.log('[mergeCanvasObjects] Removing object:', obj.id, 'created by:', obj.createdBy)
+    if (obj.stickyText) canvas.remove(obj.stickyText)
+    if (obj.stickyRect) canvas.remove(obj.stickyRect)
+    canvas.remove(obj)
+    removedCount++
+  })
+  
+  // Add or update objects from new canvas
+  newObjects.forEach(newObj => {
+    if (newObj.id && currentMap[newObj.id]) {
+      // Object exists - update it only if it looks different
+      const existingObj = currentMap[newObj.id]
+      const needsUpdate = (
+        existingObj.left !== newObj.left ||
+        existingObj.top !== newObj.top ||
+        existingObj.scaleX !== newObj.scaleX ||
+        existingObj.scaleY !== newObj.scaleY ||
+        existingObj.angle !== newObj.angle ||
+        existingObj.fill !== newObj.fill ||
+        existingObj.stroke !== newObj.stroke
+      )
+      
+      if (needsUpdate) {
+        existingObj.set({
+          left: newObj.left,
+          top: newObj.top,
+          scaleX: newObj.scaleX,
+          scaleY: newObj.scaleY,
+          angle: newObj.angle,
+          fill: newObj.fill,
+          stroke: newObj.stroke,
+          strokeWidth: newObj.strokeWidth,
+          opacity: newObj.opacity,
+        })
+        existingObj.setCoords()
+        updatedCount++
+      }
+    } else {
+      // New object - add it
+      fabric.util.enlivenObjects([newObj], function(enlivenedObjects) {
+        enlivenedObjects.forEach(obj => {
+          canvas.add(obj)
+          addedCount++
+        })
+        canvas.requestRenderAll()
+      }, null)
+    }
+  })
+  
+  if (addedCount > 0 || updatedCount > 0 || removedCount > 0) {
+    console.log('[mergeCanvasObjects] Merged: ' + addedCount + ' added, ' + updatedCount + ' updated, ' + removedCount + ' removed')
+  }
+  
+  canvas.requestRenderAll()
+  if (isMutingRef) isMutingRef.current = false
+  onDone()
 }
 
 // Helper: load JSON into the canvas and restore object state
@@ -173,26 +305,36 @@ const loadJsonIntoCanvas = (canvas, parsed, isMutingRef, onDone) => {
   }, (o, fabricObj) => { if (fabricObj) fabricObj.setCoords() })
 }
 
-// Load canvas data from Neon database only
-const deserializeCanvas = (canvas, isMutingRef, onDone) => {
+// Load canvas data from Neon database (session-specific)
+const deserializeCanvas = (canvas, isMutingRef, sessionId, onDone) => {
   const boardId = resolveBoardId()
 
+  console.log('[deserializeCanvas] ========== LOADING SESSION ==========')
+  console.log('[deserializeCanvas] Board ID:', boardId)
+  console.log('[deserializeCanvas] Session ID:', sessionId)
+
   if (!boardId) {
-    console.warn('[Whiteboard] No boardId found - user not authenticated')
+    console.warn('[deserializeCanvas] No boardId found - user not authenticated')
     onDone()
     return
   }
 
-  console.log('[Whiteboard] Loading board from database:', boardId)
+  if (!sessionId) {
+    console.warn('[deserializeCanvas] No sessionId found - cannot load')
+    onDone()
+    return
+  }
+
+  console.log('[deserializeCanvas] Loading session from database:', sessionId)
 
   // Load from Neon database with retry logic
   const loadWithRetry = async (retries = 3) => {
     for (let i = 0; i < retries; i++) {
       try {
-        const data = await loadBoard(boardId)
+        const data = await getSession(boardId, sessionId)
         return data
       } catch (err) {
-        console.warn(`[Whiteboard] Board load attempt ${i + 1}/${retries} failed:`, err.message)
+        console.warn(`[Whiteboard] Session load attempt ${i + 1}/${retries} failed:`, err.message)
         if (i < retries - 1) {
           // Wait before retrying (exponential backoff: 1s, 2s, 4s)
           await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000))
@@ -204,8 +346,11 @@ const deserializeCanvas = (canvas, isMutingRef, onDone) => {
   }
 
   loadWithRetry()
-    .then(({ canvasJson, background }) => {
-      console.log('[Whiteboard] Board loaded successfully. Objects count:', canvasJson?.objects?.length || 0, 'Background:', background)
+    .then(({ session }) => {
+      const canvasJson = session.canvas_json
+      const background = session.background
+      
+      console.log('[Whiteboard] Session loaded successfully. Objects count:', canvasJson?.objects?.length || 0, 'Background:', background)
       if (!canvas.lowerCanvasEl) {
         console.warn('[Whiteboard] Canvas disposed during load - skipping')
         onDone()
@@ -228,12 +373,12 @@ const deserializeCanvas = (canvas, isMutingRef, onDone) => {
         })
       } else {
         // No data in backend yet - start with empty canvas
-        console.log('[Whiteboard] No canvas data in database - starting with empty canvas')
+        console.log('[Whiteboard] No canvas data in session - starting with empty canvas')
         onDone()
       }
     })
     .catch(err => {
-      console.error('[Whiteboard] Board load failed after retries:', err.message, '- Starting with empty canvas')
+      console.error('[Whiteboard] Session load failed after retries:', err.message, '- Starting with empty canvas')
       console.log('[Whiteboard] Realtime collaboration will still work for live updates')
       // Start with empty canvas if backend fails - realtime will still work
       // Request sync from other collaborators after a short delay
@@ -487,7 +632,11 @@ const drawPlaceholder = (ctx, obj) => {
 const Whiteboard = ({
   tool, setTool, color, strokeWidth,
   setCanvasRef, canvasBackground, setCanvasBackground, syncBoardAppearance, fillShape, onHistoryChange, theme,
+  onBoardIdChange, currentSessionId, onSessionIdChange, user,
 }) => {
+  console.log('[Whiteboard] Component render - user:', user ? `${user.name} (${user.email})` : 'NULL')
+  console.log('[Whiteboard] Component render - currentSessionId:', currentSessionId)
+  
   // Ref to suppress local re-processing of our own realtime echo
   const realtimeIgnoreRef = useRef(false)
   const containerRef = useRef(null)
@@ -505,12 +654,23 @@ const Whiteboard = ({
   const mountedRef = useRef(true)
   // Track when we last made a local change (to avoid overwriting with stale DB data)
   const lastLocalChangeRef = useRef(0)
+  // Track when we last saved to database
+  const lastSaveTimeRef = useRef(0)
   // Track if user is actively editing text
   const isEditingTextRef = useRef(false)
+  // Store currentSessionId in ref for use in callbacks
+  const currentSessionIdRef = useRef(currentSessionId)
+  // Timeout ref for editing indicator
+  const editingTimeoutRef = useRef(null)
 
   const historyRef = useRef([])
   const historyIdxRef = useRef(-1)
   const isMutingRef = useRef(false)
+
+  // Update ref when prop changes
+  useEffect(() => {
+    currentSessionIdRef.current = currentSessionId
+  }, [currentSessionId])
 
   const [selectedObject, setSelectedObject] = useState(null)
   const [contextMenu, setContextMenu] = useState(null)
@@ -528,111 +688,540 @@ const Whiteboard = ({
   useEffect(() => { strokeRef.current = strokeWidth }, [strokeWidth])
   useEffect(() => { toolRef.current = tool }, [tool])
 
+  // Notify parent about boardId when component mounts
+  useEffect(() => {
+    const boardId = resolveBoardId()
+    if (boardId && onBoardIdChange) {
+      onBoardIdChange(boardId)
+    }
+  }, [onBoardIdChange])
+
+  // Load current session ID from URL ONLY on initial mount
+  useEffect(() => {
+    const boardId = resolveBoardId()
+    const urlSessionId = resolveSessionId()
+    
+    // Only set session from URL if we don't have a currentSessionId yet
+    if (urlSessionId && onSessionIdChange && !currentSessionId) {
+      console.log('[Whiteboard] Using session from URL on initial load:', urlSessionId)
+      onSessionIdChange(urlSessionId)
+      window.dispatchEvent(new CustomEvent('wb-session-changed', {
+        detail: { sessionId: urlSessionId }
+      }))
+      return
+    }
+    
+    // Otherwise load from backend
+    if (boardId && onSessionIdChange && !currentSessionId) {
+      // Get the active session from backend
+      import('../services/api').then(({ listSessions }) => {
+        listSessions(boardId).then(({ sessions }) => {
+          const activeSession = sessions.find(s => s.is_active)
+          if (activeSession) {
+            console.log('[Whiteboard] Using active session from backend:', activeSession.id)
+            onSessionIdChange(activeSession.id)
+            // Emit event for Authgate to pick up
+            window.dispatchEvent(new CustomEvent('wb-session-changed', {
+              detail: { sessionId: activeSession.id }
+            }))
+          }
+        }).catch(err => {
+          console.warn('[Whiteboard] Failed to load sessions:', err)
+        })
+      })
+    }
+  }, [currentSessionId, onSessionIdChange])
+
+  // Emit event when session changes
+  useEffect(() => {
+    if (currentSessionId) {
+      window.dispatchEvent(new CustomEvent('wb-session-changed', {
+        detail: { sessionId: currentSessionId }
+      }))
+    }
+  }, [currentSessionId])
+
+  // Initialize/reinitialize realtime connection when sessionId or user changes
+  useEffect(() => {
+    const boardId = resolveBoardId()
+    console.log('[Whiteboard] Realtime useEffect triggered')
+    console.log('[Whiteboard]   - boardId:', boardId)
+    console.log('[Whiteboard]   - user:', user ? `${user.name} (${user.email})` : 'null')
+    console.log('[Whiteboard]   - currentSessionId:', currentSessionId)
+    
+    if (!boardId || !user) {
+      console.log('[Whiteboard] Skipping realtime init - boardId:', boardId, 'user:', user?.name)
+      return
+    }
+
+    console.log('[Whiteboard] Initializing realtime for session:', currentSessionId || '(none)', 'user:', user.name)
+    
+    // Track if this effect is still active
+    let isActive = true
+    
+    // Initialize realtime (initRealtime handles disconnecting if already connected)
+    initRealtime(boardId, currentSessionId, (msg) => {
+        // Handle messages (this is the same handler as before)
+        if (!msg) return
+        console.log('[Whiteboard] Received realtime message:', msg.type)
+        
+        const currentCanvas = fabricRef.current
+        if (!currentCanvas) return
+
+        // Handle canvas:clear
+        if (msg.type === 'canvas:clear') {
+          isMutingRef.current = true
+          currentCanvas.getObjects().slice().forEach(o => currentCanvas.remove(o))
+          const bg = msg.background || '#ffffff'
+          currentCanvas.setBackgroundColor(bg, () => {
+            if (currentCanvas.lowerCanvasEl) currentCanvas.renderAll()
+          })
+          isMutingRef.current = false
+          return
+        }
+
+        // Handle canvas:full
+        if (msg.type === 'canvas:full' && msg.canvasJson) {
+          const bgToApply = msg.background
+          realtimeIgnoreRef.current = true
+          mergeCanvasObjects(currentCanvas, msg.canvasJson, isMutingRef, () => {
+            if (bgToApply && currentCanvas.lowerCanvasEl) {
+              currentCanvas.setBackgroundColor(bgToApply, () => currentCanvas.requestRenderAll())
+            } else {
+              currentCanvas.requestRenderAll()
+            }
+            realtimeIgnoreRef.current = false
+          })
+          return
+        }
+
+        // Handle sync:request
+        if (msg.type === 'sync:request') {
+          if (currentCanvas && currentCanvas.lowerCanvasEl) {
+            publishFullCanvas({
+              type: 'canvas:full',
+              canvasJson: currentCanvas.toJSON(SERIALIZE_PROPS),
+              background: currentCanvas.backgroundColor || '#ffffff'
+            })
+          }
+        }
+      })
+    .then(() => {
+      // Only proceed if this effect is still active
+      if (!isActive) {
+        console.log('[Whiteboard] Effect cancelled, skipping presence enter')
+        return
+      }
+      
+      // Enter presence
+      console.log('[Whiteboard] About to enter presence with:', user.name, user.email)
+      return enterPresence({
+        name: user.name,
+        email: user.email,
+        isEditing: false
+      })
+    })
+    .then(() => {
+      if (!isActive) return
+      console.log('[Whiteboard] Successfully entered presence')
+      
+      // Subscribe to viewport sync
+      const unsubViewport = onViewportSync((data) => {
+        const currentCanvas = fabricRef.current
+        if (!currentCanvas || !currentCanvas.lowerCanvasEl) return
+        
+        console.log('[Whiteboard] Received viewport sync:', data)
+        
+        const vpt = currentCanvas.viewportTransform.slice()
+        vpt[0] = data.zoom
+        vpt[3] = data.zoom
+        vpt[4] = data.panX
+        vpt[5] = data.panY
+        
+        currentCanvas.setViewportTransform(vpt)
+        currentCanvas.renderAll()
+        
+        console.log('[Whiteboard] Applied viewport sync - zoom:', data.zoom, 'pan:', data.panX, data.panY)
+      })
+      
+      window._unsubViewport = unsubViewport
+    })
+    .catch(err => {
+      if (!isActive) return
+      console.error('[Whiteboard] Realtime init failed:', err)
+      console.error('[Whiteboard] Error details:', err.message, err.stack)
+    })
+
+    return () => {
+      // Mark effect as inactive
+      isActive = false
+      
+      // Cleanup viewport subscription
+      if (window._unsubViewport) {
+        window._unsubViewport()
+        window._unsubViewport = null
+      }
+      
+      // Note: We don't disconnect realtime here because:
+      // 1. React StrictMode causes double-mount which would disconnect prematurely
+      // 2. initRealtime() handles switching channels automatically
+      // 3. Disconnection happens in the main component cleanup (see below)
+    }
+  }, [currentSessionId, user])
+
   const pushSnapshot = useCallback(() => {
     const canvas = fabricRef.current
     if (!canvas || isMutingRef.current) return
     // Don't push if canvas is disposed (StrictMode cleanup)
     if (!canvas.lowerCanvasEl || !canvas.wrapperEl) return
+    
+    // Don't create snapshots for changes from realtime sync (other users)
+    if (realtimeIgnoreRef.current) {
+      console.log('[pushSnapshot] Skipping snapshot - change from realtime sync')
+      return
+    }
+    
     const json = canvas.toJSON(SERIALIZE_PROPS)
+    
+    // Tag all current objects with the current user's email if not already tagged
+    const userEmail = user?.email || 'anonymous'
+    canvas.getObjects().forEach(obj => {
+      if (!obj.createdBy) {
+        obj.createdBy = userEmail
+      }
+    })
+    
+    // Create snapshot with user metadata for per-user undo/redo
+    const snapshot = {
+      canvasJson: json,
+      userEmail: userEmail,
+      timestamp: Date.now(),
+      // Track which object IDs were present in this snapshot
+      objectIds: json.objects?.map(o => o.id).filter(Boolean) || []
+    }
+    
     // Avoid duplicate consecutive snapshots (prevents double-click-to-undo issue)
     const prev = historyRef.current[historyIdxRef.current]
-    if (prev && JSON.stringify(json) === JSON.stringify(prev)) return
-    historyRef.current = historyRef.current.slice(0, historyIdxRef.current + 1)
-    historyRef.current.push(json)
-    historyIdxRef.current = historyRef.current.length - 1
-    onHistoryChange?.({ canUndo: historyIdxRef.current > 0, canRedo: false })
+    if (prev && JSON.stringify(snapshot.canvasJson) === JSON.stringify(prev.canvasJson)) {
+      console.log('[pushSnapshot] Skipping duplicate snapshot')
+      return
+    }
     
-    // Save history to localStorage for persistence across refreshes
+    historyRef.current = historyRef.current.slice(0, historyIdxRef.current + 1)
+    historyRef.current.push(snapshot)
+    historyIdxRef.current = historyRef.current.length - 1
+    console.log('[pushSnapshot] Created snapshot #' + historyIdxRef.current + ' by ' + snapshot.userEmail + ' (total: ' + historyRef.current.length + ')')
+    
+    // Calculate undo/redo availability for current user only
+    const userSnapshots = historyRef.current.filter(s => s.userEmail === user?.email)
+    const currentUserSnapshotIndex = userSnapshots.findIndex(s => s === snapshot)
+    
+    onHistoryChange?.({ 
+      canUndo: currentUserSnapshotIndex > 0, 
+      canRedo: false 
+    })
+    
+    // Save history to localStorage for persistence across refreshes (per-session, per-user)
     const boardId = resolveBoardId()
-    if (boardId) {
+    const sessionId = currentSessionIdRef.current
+    if (boardId && sessionId && userEmail) {
       try {
         // Keep only last 20 snapshots to avoid localStorage quota issues
         const maxSnapshots = 20
         const startIdx = Math.max(0, historyRef.current.length - maxSnapshots)
         const historyToSave = historyRef.current.slice(startIdx)
-        localStorage.setItem(`wb_history_${boardId}`, JSON.stringify(historyToSave))
-        localStorage.setItem(`wb_history_idx_${boardId}`, String(historyToSave.length - 1))
+        localStorage.setItem(`wb_history_${boardId}_${sessionId}_${userEmail}`, JSON.stringify(historyToSave))
+        localStorage.setItem(`wb_history_idx_${boardId}_${sessionId}_${userEmail}`, String(historyToSave.length - 1))
       } catch (err) {
         console.warn('[Whiteboard] Failed to save history to localStorage:', err)
       }
     }
-  }, [onHistoryChange])
+  }, [onHistoryChange, user])
 
-  const applySnapshot = useCallback((json) => {
+  const applySnapshot = useCallback((snapshot, userEmail) => {
     const canvas = fabricRef.current
     if (!canvas) return
+    
+    // Handle both old format (plain JSON) and new format (with metadata)
+    const json = snapshot?.canvasJson || snapshot
+    const snapshotObjectIds = snapshot?.objectIds || []
+    
     if (!json || typeof json !== 'object') {
-      console.warn('[Whiteboard] Invalid snapshot data:', json)
+      console.warn('[Whiteboard] Invalid snapshot data:', snapshot)
       return
     }
-    loadJsonIntoCanvas(canvas, json, isMutingRef, () => {
-      serializeCanvas(canvas)
+    
+    // Get current objects on canvas
+    const currentObjects = canvas.getObjects()
+    const currentObjectMap = {}
+    currentObjects.forEach(obj => {
+      if (obj.id) {
+        currentObjectMap[obj.id] = obj
+      }
     })
+    
+    // Get snapshot objects
+    const snapshotObjects = json.objects || []
+    const snapshotObjectMap = {}
+    snapshotObjects.forEach(obj => {
+      if (obj.id) {
+        snapshotObjectMap[obj.id] = obj
+      }
+    })
+    
+    console.log('[applySnapshot] Current objects:', Object.keys(currentObjectMap).length, 'Snapshot objects:', Object.keys(snapshotObjectMap).length)
+    
+    // For per-user undo: Only modify objects that belong to this user
+    // Keep objects from other users untouched
+    isMutingRef.current = true
+    
+    // Remove objects that are in current canvas but not in snapshot (user's deleted objects)
+    const objectsToRemove = []
+    currentObjects.forEach(obj => {
+      if (obj.id && !snapshotObjectMap[obj.id]) {
+        // Check if this object belongs to the user doing the undo
+        if (obj.createdBy === userEmail || !obj.createdBy) {
+          objectsToRemove.push(obj)
+        }
+      }
+    })
+    
+    objectsToRemove.forEach(obj => {
+      console.log('[applySnapshot] Removing object:', obj.id, 'created by:', obj.createdBy)
+      if (obj.stickyText) canvas.remove(obj.stickyText)
+      if (obj.stickyRect) canvas.remove(obj.stickyRect)
+      canvas.remove(obj)
+    })
+    
+    // Add or update objects from snapshot
+    const objectsToAdd = []
+    snapshotObjects.forEach(snapshotObj => {
+      if (snapshotObj.id) {
+        const existingObj = currentObjectMap[snapshotObj.id]
+        if (existingObj) {
+          // Object exists - update its properties
+          existingObj.set({
+            left: snapshotObj.left,
+            top: snapshotObj.top,
+            scaleX: snapshotObj.scaleX,
+            scaleY: snapshotObj.scaleY,
+            angle: snapshotObj.angle,
+            fill: snapshotObj.fill,
+            stroke: snapshotObj.stroke,
+            strokeWidth: snapshotObj.strokeWidth,
+            opacity: snapshotObj.opacity,
+          })
+          existingObj.setCoords()
+        } else {
+          // Object doesn't exist - add it (only if it belongs to this user)
+          if (snapshotObj.createdBy === userEmail || !snapshotObj.createdBy) {
+            objectsToAdd.push(snapshotObj)
+          }
+        }
+      }
+    })
+    
+    // Add new objects
+    if (objectsToAdd.length > 0) {
+      fabric.util.enlivenObjects(objectsToAdd, function(enlivenedObjects) {
+        enlivenedObjects.forEach(obj => {
+          console.log('[applySnapshot] Adding object:', obj.id, 'created by:', obj.createdBy)
+          obj.set({ selectable: true, evented: true })
+          if (obj.type === 'line') {
+            obj.set({ perPixelTargetFind: true, hasBorders: false })
+            applyLineControls(obj)
+          }
+          canvas.add(obj)
+        })
+        canvas.requestRenderAll()
+      }, null)
+    }
+    
+    canvas.requestRenderAll()
+    isMutingRef.current = false
   }, [])
 
   const undo = useCallback(() => {
-    if (historyIdxRef.current <= 0) return
-    const targetSnapshot = historyRef.current[historyIdxRef.current - 1]
-    if (!targetSnapshot) {
-      console.warn('[Whiteboard] Undo: target snapshot not found')
+    const userEmail = user?.email
+    if (!userEmail) {
+      console.warn('[undo] No user email - cannot undo')
       return
     }
-    historyIdxRef.current -= 1
-    applySnapshot(targetSnapshot)
-    onHistoryChange?.({ canUndo: historyIdxRef.current > 0, canRedo: historyIdxRef.current < historyRef.current.length - 1 })
     
-    // Save updated index to localStorage
+    // Find all snapshots created by current user
+    const userSnapshots = []
+    const userSnapshotIndices = []
+    historyRef.current.forEach((snapshot, idx) => {
+      const snapshotEmail = snapshot?.userEmail || 'anonymous'
+      if (snapshotEmail === userEmail) {
+        userSnapshots.push(snapshot)
+        userSnapshotIndices.push(idx)
+      }
+    })
+    
+    if (userSnapshots.length === 0) {
+      console.log('[undo] No snapshots found for current user')
+      return
+    }
+    
+    // Find current position in user's snapshot history
+    const currentUserSnapshotIdx = userSnapshotIndices.indexOf(historyIdxRef.current)
+    
+    if (currentUserSnapshotIdx <= 0) {
+      console.log('[undo] Already at first snapshot for current user')
+      return
+    }
+    
+    // Go to previous snapshot created by this user
+    const targetGlobalIdx = userSnapshotIndices[currentUserSnapshotIdx - 1]
+    const targetSnapshot = historyRef.current[targetGlobalIdx]
+    
+    if (!targetSnapshot) {
+      console.warn('[undo] Target snapshot not found')
+      return
+    }
+    
+    console.log('[undo] User ' + userEmail + ' going from snapshot #' + historyIdxRef.current + ' to #' + targetGlobalIdx)
+    historyIdxRef.current = targetGlobalIdx
+    applySnapshot(targetSnapshot, userEmail)  // Pass userEmail to filter objects
+    
+    // Update button states based on user's snapshot position
+    const canUndoMore = currentUserSnapshotIdx > 1
+    const canRedo = currentUserSnapshotIdx < userSnapshots.length - 1
+    onHistoryChange?.({ canUndo: canUndoMore, canRedo })
+    
+    // Save updated index to localStorage (per-session, per-user)
     const boardId = resolveBoardId()
-    if (boardId) {
-      localStorage.setItem(`wb_history_idx_${boardId}`, String(historyIdxRef.current))
-      
-      // Broadcast the undo to collaborators
+    const sessionId = currentSessionIdRef.current
+    if (boardId && sessionId && userEmail) {
+      localStorage.setItem(`wb_history_idx_${boardId}_${sessionId}_${userEmail}`, String(historyIdxRef.current))
+    }
+    
+    // Save the undone state to database and broadcast immediately
+    // This ensures all collaborators see the undo
+    setTimeout(() => {
       const canvas = fabricRef.current
-      if (canvas) {
+      if (canvas && canvas.lowerCanvasEl) {
+        // Save to database
         const canvasJson = canvas.toJSON(SERIALIZE_PROPS)
         const background = canvas.backgroundColor || '#ffffff'
-        const messageSize = JSON.stringify({ canvasJson, background }).length
+        const sessionId = currentSessionIdRef.current
         
+        console.log('[undo] Broadcasting undone state to collaborators')
+        
+        // Broadcast to collaborators FIRST (before database save)
+        const messageSize = JSON.stringify({ canvasJson, background }).length
         if (messageSize < 60000) {
           publishFullCanvas({ type: 'canvas:full', canvasJson, background })
+          console.log('[undo] Broadcast successful, size:', messageSize, 'bytes')
+        } else {
+          console.warn('[undo] Canvas too large to broadcast:', messageSize, 'bytes - using database only')
+        }
+        
+        // Then save to database
+        if (boardId && sessionId) {
+          saveToSessionImmediate(boardId, sessionId, canvasJson, background)
+            .then(() => {
+              console.log('[undo] Saved undone state to database')
+            })
         }
       }
-    }
-  }, [applySnapshot, onHistoryChange])
+    }, 50)
+  }, [applySnapshot, onHistoryChange, user])
 
   const redo = useCallback(() => {
-    if (historyIdxRef.current >= historyRef.current.length - 1) return
-    const targetSnapshot = historyRef.current[historyIdxRef.current + 1]
-    if (!targetSnapshot) {
-      console.warn('[Whiteboard] Redo: target snapshot not found')
+    const userEmail = user?.email
+    if (!userEmail) {
+      console.warn('[redo] No user email - cannot redo')
       return
     }
-    historyIdxRef.current += 1
-    applySnapshot(targetSnapshot)
-    onHistoryChange?.({ canUndo: historyIdxRef.current > 0, canRedo: historyIdxRef.current < historyRef.current.length - 1 })
     
-    // Save updated index to localStorage
+    // Find all snapshots created by current user
+    const userSnapshots = []
+    const userSnapshotIndices = []
+    historyRef.current.forEach((snapshot, idx) => {
+      const snapshotEmail = snapshot?.userEmail || 'anonymous'
+      if (snapshotEmail === userEmail) {
+        userSnapshots.push(snapshot)
+        userSnapshotIndices.push(idx)
+      }
+    })
+    
+    if (userSnapshots.length === 0) {
+      console.log('[redo] No snapshots found for current user')
+      return
+    }
+    
+    // Find current position in user's snapshot history
+    const currentUserSnapshotIdx = userSnapshotIndices.indexOf(historyIdxRef.current)
+    
+    if (currentUserSnapshotIdx >= userSnapshots.length - 1) {
+      console.log('[redo] Already at latest snapshot for current user')
+      return
+    }
+    
+    // Go to next snapshot created by this user
+    const targetGlobalIdx = userSnapshotIndices[currentUserSnapshotIdx + 1]
+    const targetSnapshot = historyRef.current[targetGlobalIdx]
+    
+    if (!targetSnapshot) {
+      console.warn('[redo] Target snapshot not found')
+      return
+    }
+    
+    console.log('[redo] User ' + userEmail + ' going from snapshot #' + historyIdxRef.current + ' to #' + targetGlobalIdx)
+    historyIdxRef.current = targetGlobalIdx
+    applySnapshot(targetSnapshot, userEmail)  // Pass userEmail to filter objects
+    
+    // Update button states based on user's snapshot position
+    const canUndo = currentUserSnapshotIdx >= 0
+    const canRedoMore = currentUserSnapshotIdx < userSnapshots.length - 2
+    onHistoryChange?.({ canUndo, canRedo: canRedoMore })
+    
+    // Save updated index to localStorage (per-session, per-user)
     const boardId = resolveBoardId()
-    if (boardId) {
-      localStorage.setItem(`wb_history_idx_${boardId}`, String(historyIdxRef.current))
-      
-      // Broadcast the redo to collaborators
+    const sessionId = currentSessionIdRef.current
+    if (boardId && sessionId && userEmail) {
+      localStorage.setItem(`wb_history_idx_${boardId}_${sessionId}_${userEmail}`, String(historyIdxRef.current))
+    }
+    
+    // Save to database and broadcast after snapshot is applied
+    // This ensures all collaborators see the redo
+    setTimeout(() => {
       const canvas = fabricRef.current
       if (canvas) {
         const canvasJson = canvas.toJSON(SERIALIZE_PROPS)
         const background = canvas.backgroundColor || '#ffffff'
-        const messageSize = JSON.stringify({ canvasJson, background }).length
+        const sessionId = currentSessionIdRef.current
         
+        console.log('[redo] Broadcasting redone state to collaborators')
+        
+        // Broadcast to collaborators FIRST (before database save)
+        const messageSize = JSON.stringify({ canvasJson, background }).length
         if (messageSize < 60000) {
           publishFullCanvas({ type: 'canvas:full', canvasJson, background })
+          console.log('[redo] Broadcast successful, size:', messageSize, 'bytes')
+        } else {
+          console.warn('[redo] Canvas too large to broadcast:', messageSize, 'bytes - using database only')
+        }
+        
+        // Then save to database
+        if (boardId && sessionId) {
+          saveToSessionImmediate(boardId, sessionId, canvasJson, background)
+            .then(() => {
+              console.log('[redo] Saved redone state to database')
+            })
         }
       }
-    }
-  }, [applySnapshot, onHistoryChange])
+    }, 50)
+  }, [applySnapshot, onHistoryChange, user])
 
-  const clearCanvas = useCallback(() => {
+  const clearCanvas = useCallback(async () => {
     const canvas = fabricRef.current
     if (!canvas) return
+    
+    console.log('[clearCanvas] Clearing canvas and resetting history')
+    
     isMutingRef.current = true
     canvas.getObjects().slice().forEach(obj => {
       if (obj.stickyText) canvas.remove(obj.stickyText)
@@ -641,23 +1230,50 @@ const Whiteboard = ({
     })
     isMutingRef.current = false
     canvas.discardActiveObject()
-    canvas.fire('object:modified')
     canvas.renderAll()
-    // Reset history
-    historyRef.current = []
-    historyIdxRef.current = -1
-    onHistoryChange?.({ canUndo: false, canRedo: false })
-    // Broadcast clear to all collaborators
+    
+    // Mark that canvas was intentionally cleared (permanent marker)
+    lastLocalChangeRef.current = Date.now()
+    
+    // Broadcast clear to all collaborators FIRST
     const boardId = resolveBoardId()
     if (boardId) {
       publishClear({ type: 'canvas:clear', background: canvas.backgroundColor || '#ffffff' })
-      // Clear history from localStorage when clearing canvas
-      localStorage.removeItem(`wb_history_${boardId}`)
-      localStorage.removeItem(`wb_history_idx_${boardId}`)
     }
-    // Also save the cleared state to DB
-    serializeCanvas(canvas)
-  }, [onHistoryChange])
+    
+    // Save the cleared state to DB IMMEDIATELY (no debounce)
+    const json = canvas.toJSON(SERIALIZE_PROPS)
+    const sessionId = currentSessionIdRef.current
+    if (boardId && sessionId) {
+      await saveToSessionImmediate(boardId, sessionId, json, canvas.backgroundColor || '#ffffff')
+      console.log('[clearCanvas] Empty canvas saved to database')
+    }
+    
+    // Reset history AFTER saving to DB
+    historyRef.current = []
+    historyIdxRef.current = -1
+    
+    // Clear history from localStorage (per-user)
+    const userEmail = user?.email
+    if (boardId && sessionId && userEmail) {
+      localStorage.removeItem(`wb_history_${boardId}_${sessionId}_${userEmail}`)
+      localStorage.removeItem(`wb_history_idx_${boardId}_${sessionId}_${userEmail}`)
+    }
+    
+    // Create initial empty snapshot after a short delay
+    setTimeout(() => {
+      if (!canvas || !canvas.lowerCanvasEl) return
+      const emptySnapshot = {
+        canvasJson: canvas.toJSON(SERIALIZE_PROPS),
+        userEmail: user?.email || 'anonymous',
+        timestamp: Date.now()
+      }
+      historyRef.current = [emptySnapshot]
+      historyIdxRef.current = 0
+      onHistoryChange?.({ canUndo: false, canRedo: false })
+      console.log('[clearCanvas] Created empty snapshot')
+    }, 150)
+  }, [onHistoryChange, user])
 
   const deleteSelected = useCallback(() => {
     const canvas = fabricRef.current
@@ -697,17 +1313,65 @@ const Whiteboard = ({
     })
   }, [])
 
+  // Function to reload canvas when session changes
+  const reloadSession = useCallback((sessionId) => {
+    const canvas = fabricRef.current
+    if (!canvas || !canvas.lowerCanvasEl) return
+    
+    // Use provided sessionId or fall back to current
+    const targetSessionId = sessionId || currentSessionIdRef.current
+    if (!targetSessionId) {
+      console.warn('[Whiteboard] No session ID provided for reload')
+      return
+    }
+    
+    console.log('[Whiteboard] Reloading session:', targetSessionId)
+    
+    // Clear current canvas
+    isMutingRef.current = true
+    canvas.getObjects().slice().forEach(obj => {
+      if (obj.stickyText) canvas.remove(obj.stickyText)
+      if (obj.stickyRect) canvas.remove(obj.stickyRect)
+      canvas.remove(obj)
+    })
+    canvas.discardActiveObject()
+    isMutingRef.current = false
+    
+    // Reset history
+    historyRef.current = []
+    historyIdxRef.current = -1
+    onHistoryChange?.({ canUndo: false, canRedo: false })
+    
+    // Reload canvas data from database
+    deserializeCanvas(canvas, isMutingRef, targetSessionId, (result) => {
+      console.log('[Whiteboard] Session reloaded successfully')
+      canvas.renderAll()
+      
+      // Create initial snapshot with user metadata
+      const snapshot = {
+        canvasJson: canvas.toJSON(SERIALIZE_PROPS),
+        userEmail: user?.email || 'anonymous',
+        timestamp: Date.now()
+      }
+      historyRef.current = [snapshot]
+      historyIdxRef.current = 0
+      onHistoryChange?.({ canUndo: false, canRedo: false })
+    })
+  }, [onHistoryChange, user])
+
   useEffect(() => {
     window.__wbUndo = undo
     window.__wbRedo = redo
     window.__wbClear = clearCanvas
     window.__wbAddImage = addImage
     window.__wbDelete = deleteSelected
+    window.__wbLoadSession = reloadSession
     return () => {
       delete window.__wbUndo; delete window.__wbRedo
       delete window.__wbClear; delete window.__wbAddImage; delete window.__wbDelete
+      delete window.__wbLoadSession
     }
-  }, [undo, redo, clearCanvas, addImage, deleteSelected])
+  }, [undo, redo, clearCanvas, addImage, deleteSelected, reloadSession])
 
   useEffect(() => {
     const container = containerRef.current
@@ -767,7 +1431,7 @@ const Whiteboard = ({
     }
 
     // ── Load board data from backend ──────────────────────────────────────
-    deserializeCanvas(canvas, isMutingRef, (result) => {
+    deserializeCanvas(canvas, isMutingRef, currentSessionId, (result) => {
       isLoadedRef.current = true
       
       console.log('[Whiteboard] Canvas loaded. Dimensions:', canvas.getWidth(), 'x', canvas.getHeight(), 'Objects:', canvas.getObjects().length)
@@ -794,58 +1458,10 @@ const Whiteboard = ({
         }, 1000) // Wait 1 second for realtime to fully connect
       }
       
-      // For all boards, poll database as fallback when realtime messages are too large (>60KB)
-      // Both sender and receiver need this for large canvases
-      if (bid) {
-        console.log('[Whiteboard] Setting up database polling (fallback for large canvases)')
-        let lastKnownJson = ''
-        
-        const syncInterval = setInterval(() => {
-          if (!mountedRef.current || !fabricRef.current) {
-            clearInterval(syncInterval)
-            return
-          }
-          
-          // Don't poll while user is actively interacting
-          if (isDrawingRef.current || isMutingRef.current || isEditingTextRef.current) return
-          
-          // Don't poll right after local changes - give time for save to complete
-          const timeSinceLastChange = Date.now() - lastLocalChangeRef.current
-          if (timeSinceLastChange < 10000) {
-            return
-          }
-          
-          loadBoard(bid)
-            .then(({ canvasJson, background }) => {
-              const currentCanvas = fabricRef.current
-              if (!currentCanvas || !currentCanvas.lowerCanvasEl) return
-              
-              // Don't interrupt active interactions
-              if (isDrawingRef.current || isMutingRef.current || isEditingTextRef.current) return
-              
-              // Compare with last known state to detect actual changes
-              const newJson = JSON.stringify(canvasJson)
-              if (newJson !== lastKnownJson) {
-                lastKnownJson = newJson
-                console.log('[Whiteboard] Database has updates. Syncing...')
-                realtimeIgnoreRef.current = true
-                loadJsonIntoCanvas(currentCanvas, canvasJson, isMutingRef, () => {
-                  if (background && currentCanvas.lowerCanvasEl) {
-                    currentCanvas.setBackgroundColor(background, () => {
-                      currentCanvas.requestRenderAll()
-                    })
-                  } else {
-                    currentCanvas.requestRenderAll()
-                  }
-                  realtimeIgnoreRef.current = false
-                })
-              }
-            })
-            .catch(err => {
-              console.debug('[Whiteboard] Database poll failed:', err.message)
-            })
-        }, 3000) // Poll every 3 seconds
-      }
+      // Database polling disabled - using real-time sync only for better performance
+      // Real-time sync via Ably is much faster and more reliable than polling
+      // Database saves still happen for persistence, but we don't poll for changes
+      
       // Restore viewport transform from localStorage (but NOT for shared boards)
       if (bid && canvas.lowerCanvasEl && canvas.wrapperEl && !isSharedBoard) {
         const savedVpt = localStorage.getItem(`wb_viewport_${bid}`)
@@ -864,12 +1480,13 @@ const Whiteboard = ({
         }
       }
       
-      // Restore undo/redo history from localStorage
+      // Restore undo/redo history from localStorage (per-session, per-user)
       let historyRestored = false
-      if (bid) {
+      if (bid && currentSessionId && user?.email) {
         try {
-          const savedHistory = localStorage.getItem(`wb_history_${bid}`)
-          const savedIdx = localStorage.getItem(`wb_history_idx_${bid}`)
+          const userEmail = user.email
+          const savedHistory = localStorage.getItem(`wb_history_${bid}_${currentSessionId}_${userEmail}`)
+          const savedIdx = localStorage.getItem(`wb_history_idx_${bid}_${currentSessionId}_${userEmail}`)
           if (savedHistory) {
             const parsed = JSON.parse(savedHistory)
             if (Array.isArray(parsed) && parsed.length > 0) {
@@ -880,14 +1497,24 @@ const Whiteboard = ({
               if (historyIdxRef.current < 0) historyIdxRef.current = 0
               if (historyIdxRef.current >= parsed.length) historyIdxRef.current = parsed.length - 1
               
+              // Calculate button states based on user's snapshots only
+              const userSnapshots = parsed.filter(s => (s?.userEmail || 'anonymous') === userEmail)
+              const userSnapshotIndices = []
+              parsed.forEach((s, idx) => {
+                if ((s?.userEmail || 'anonymous') === userEmail) {
+                  userSnapshotIndices.push(idx)
+                }
+              })
+              const currentUserSnapshotIdx = userSnapshotIndices.indexOf(historyIdxRef.current)
+              
               // Update button states
               onHistoryChange?.({
-                canUndo: historyIdxRef.current > 0,
-                canRedo: historyIdxRef.current < parsed.length - 1
+                canUndo: currentUserSnapshotIdx > 0,
+                canRedo: currentUserSnapshotIdx < userSnapshots.length - 1
               })
               
               historyRestored = true
-              console.log(`[Whiteboard] Restored ${parsed.length} snapshots, index: ${historyIdxRef.current}`)
+              console.log(`[Whiteboard] Restored ${parsed.length} snapshots (${userSnapshots.length} by ${userEmail}) for session ${currentSessionId}, index: ${historyIdxRef.current}`)
             }
           }
         } catch (err) {
@@ -900,19 +1527,23 @@ const Whiteboard = ({
       if (!historyRestored && canvas && canvas.lowerCanvasEl) {
         // Create initial snapshot synchronously to ensure it happens before any user interaction
         try {
-          const json = JSON.stringify(canvas.toJSON(SERIALIZE_PROPS))
-          historyRef.current = [json]
+          const snapshot = {
+            canvasJson: canvas.toJSON(SERIALIZE_PROPS),
+            userEmail: user?.email || 'anonymous',
+            timestamp: Date.now()
+          }
+          historyRef.current = [snapshot]
           historyIdxRef.current = 0
           
-          // Save to localStorage
-          if (bid) {
-            localStorage.setItem(`wb_history_${bid}`, JSON.stringify([json]))
-            localStorage.setItem(`wb_history_idx_${bid}`, '0')
+          // Save to localStorage (stringify for storage) (per-session, per-user)
+          if (bid && currentSessionId && user?.email) {
+            localStorage.setItem(`wb_history_${bid}_${currentSessionId}_${user.email}`, JSON.stringify([snapshot]))
+            localStorage.setItem(`wb_history_idx_${bid}_${currentSessionId}_${user.email}`, '0')
           }
           
           // Update button states
           onHistoryChange?.({ canUndo: false, canRedo: false })
-          console.log('[Whiteboard] Created initial snapshot')
+          console.log('[Whiteboard] Created initial snapshot for user:', user?.email)
         } catch (err) {
           console.warn('[Whiteboard] Failed to create initial snapshot:', err)
         }
@@ -1018,90 +1649,22 @@ const Whiteboard = ({
         canvasJson,
         background
       })
-    }, 1000) // Increased throttle to 1 second to reduce message frequency
+    }, 300) // Reduced to 300ms for faster real-time updates
 
-    if (boardId) {
-      initRealtime(boardId, (msg) => {
-        // Received a message from another collaborator
-        if (!msg) return
-        
-        console.log('[Whiteboard] Received realtime message:', msg.type)
-        
-        // Use fabricRef.current instead of closure canvas variable
-        const currentCanvas = fabricRef.current
-        
-        // Ensure canvas exists before processing
-        if (!currentCanvas) {
-          console.warn('[Whiteboard] Ignoring realtime message - canvas not available')
-          return
-        }
+    // Throttled function to broadcast viewport changes
+    const broadcastViewport = throttle(() => {
+      if (!boardId || !canvas || !canvas.viewportTransform) return
+      const vpt = canvas.viewportTransform
+      const viewport = {
+        zoom: vpt[0], // scale x (assuming uniform scaling)
+        panX: vpt[4], // translate x
+        panY: vpt[5]  // translate y
+      }
+      console.log('[Whiteboard] Broadcasting viewport sync:', viewport)
+      publishViewportSync(viewport)
+    }, 150) // Reduced to 150ms for smoother viewport sync
 
-        realtimeIgnoreRef.current = true
-
-        // Handle clear canvas broadcast
-        if (msg.type === 'canvas:clear') {
-          console.log('[Whiteboard] Processing canvas clear from collaborator')
-          const bg = msg.background || '#ffffff'
-          isMutingRef.current = true
-          currentCanvas.getObjects().slice().forEach(o => currentCanvas.remove(o))
-          currentCanvas.setBackgroundColor(bg, () => {
-            if (currentCanvas.lowerCanvasEl) currentCanvas.renderAll()
-          })
-          isMutingRef.current = false
-          realtimeIgnoreRef.current = false
-          return
-        }
-
-        // Handle full canvas sync
-        if (msg.type === 'canvas:full' && msg.canvasJson) {
-          console.log('[Whiteboard] Applying canvas update from collaborator, objects count:', msg.canvasJson.objects?.length || 0)
-          const bgToApply = msg.background
-          loadJsonIntoCanvas(currentCanvas, msg.canvasJson, isMutingRef, () => {
-            if (bgToApply && currentCanvas.lowerCanvasEl) {
-              currentCanvas.setBackgroundColor(bgToApply, () => {
-                if (currentCanvas.lowerCanvasEl) {
-                  currentCanvas.requestRenderAll()
-                  // Force another render after a short delay to ensure visibility
-                  setTimeout(() => {
-                    if (currentCanvas.lowerCanvasEl) currentCanvas.requestRenderAll()
-                  }, 50)
-                }
-              })
-            } else if (currentCanvas.lowerCanvasEl) {
-              currentCanvas.requestRenderAll()
-              // Force another render after a short delay to ensure visibility
-              setTimeout(() => {
-                if (currentCanvas.lowerCanvasEl) currentCanvas.requestRenderAll()
-              }, 50)
-            }
-            console.log('[Whiteboard] Canvas update applied successfully. Objects on canvas:', currentCanvas.getObjects().length)
-            console.log('[Whiteboard] Canvas dimensions:', currentCanvas.getWidth(), 'x', currentCanvas.getHeight())
-            realtimeIgnoreRef.current = false
-          })
-          return
-        }
-
-        // Handle sync request from a new collaborator
-        if (msg.type === 'sync:request') {
-          console.log('[Whiteboard] Received sync request - broadcasting current canvas')
-          // Send our current canvas state to help the requester
-          const currentCanvas = fabricRef.current
-          if (currentCanvas && currentCanvas.lowerCanvasEl) {
-            const canvasJson = currentCanvas.toJSON(SERIALIZE_PROPS)
-            const background = currentCanvas.backgroundColor || '#ffffff'
-            publishFullCanvas({
-              type: 'canvas:full',
-              canvasJson,
-              background
-            })
-          }
-          realtimeIgnoreRef.current = false
-          return
-        }
-
-        realtimeIgnoreRef.current = false
-      }).catch(err => console.warn('[Whiteboard] Realtime init failed:', err.message))
-    }
+    // Note: Realtime initialization moved to separate useEffect (runs when sessionId/user changes)
 
     // ── Canvas mutation handler: save + broadcast ─────────────────────────
     const onMutation = () => {
@@ -1112,19 +1675,69 @@ const Whiteboard = ({
       // Track that we made a local change
       lastLocalChangeRef.current = Date.now()
       
-      serializeCanvas(canvas)
+      // Update presence to show user is editing
+      if (user) {
+        updatePresence({
+          name: user.name,
+          email: user.email,
+          isEditing: true
+        })
+        
+        // Clear any existing timeout
+        if (editingTimeoutRef.current) {
+          clearTimeout(editingTimeoutRef.current)
+        }
+        
+        // Set isEditing to false after 2 seconds of inactivity
+        editingTimeoutRef.current = setTimeout(() => {
+          if (user) {
+            updatePresence({
+              name: user.name,
+              email: user.email,
+              isEditing: false
+            })
+          }
+        }, 2000)
+      }
+      
+      serializeCanvas(canvas, currentSessionIdRef)
       pushSnapshot()
       // Broadcast full canvas to collaborators
       broadcastCanvas()
     }
     
-    canvas.on('object:added', onMutation)
+    // Assign unique IDs to new objects for merge conflict resolution
+    canvas.on('object:added', (e) => {
+      const obj = e.target
+      if (obj && !obj.id) {
+        // Generate unique ID: timestamp + random string
+        obj.id = `obj_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      }
+      // Tag object with creator's email for per-user undo/redo
+      if (obj && !obj.createdBy && user?.email) {
+        obj.createdBy = user.email
+        console.log('[Whiteboard] Tagged object', obj.id, 'as created by', user.email)
+      }
+      onMutation()
+    })
     canvas.on('object:modified', onMutation)
     canvas.on('object:removed', onMutation)
     canvas.on('path:created', (opt) => {
       if (toolRef.current === 'eraser')
         opt.path.set({ isEraserStroke: true, selectable: false, evented: false })
       onMutation()
+    })
+    
+    // Turn off editing indicator when selection is cleared
+    canvas.on('selection:cleared', () => {
+      if (user && !isEditingTextRef.current && !isDrawingRef.current) {
+        console.log('[Whiteboard] selection:cleared - Setting isEditing to FALSE')
+        updatePresence({
+          name: user.name,
+          email: user.email,
+          isEditing: false
+        })
+      }
     })
 
     const syncTextBar = (obj) => {
@@ -1204,16 +1817,60 @@ const Whiteboard = ({
       console.log('[Whiteboard] Text editing started - pausing database sync')
       isEditingTextRef.current = true
       lastLocalChangeRef.current = Date.now()
+      
+      // Update presence to show user is editing
+      if (user) {
+        updatePresence({
+          name: user.name,
+          email: user.email,
+          isEditing: true
+        })
+      }
     })
     canvas.on('text:editing:exited', () => {
       console.log('[Whiteboard] Text editing finished - resuming database sync')
       isEditingTextRef.current = false
       lastLocalChangeRef.current = Date.now()
+      
+      // Update presence to show user stopped editing
+      if (user) {
+        updatePresence({
+          name: user.name,
+          email: user.email,
+          isEditing: false
+        })
+      }
     })
 
     canvas.on('object:moving', (e) => {
       // Track movement to prevent database polling during drag
       lastLocalChangeRef.current = Date.now()
+      
+      // Update presence to show user is editing
+      if (user && !isEditingTextRef.current) {
+        console.log('[Whiteboard] object:moving - Setting isEditing to TRUE')
+        updatePresence({
+          name: user.name,
+          email: user.email,
+          isEditing: true
+        })
+        
+        // Clear any existing timeout
+        if (editingTimeoutRef.current) {
+          clearTimeout(editingTimeoutRef.current)
+        }
+        
+        // Set isEditing to false after 2 seconds of inactivity
+        editingTimeoutRef.current = setTimeout(() => {
+          if (user) {
+            updatePresence({
+              name: user.name,
+              email: user.email,
+              isEditing: false
+            })
+          }
+        }, 2000)
+      }
       
       const obj = e.target
       if (obj && (obj.type === 'i-text' || obj.type === 'textbox')) {
@@ -1227,10 +1884,80 @@ const Whiteboard = ({
       // Track scaling to prevent database polling during scale
       lastLocalChangeRef.current = Date.now()
       
+      // Update presence to show user is editing
+      if (user && !isEditingTextRef.current) {
+        console.log('[Whiteboard] object:scaling - Setting isEditing to TRUE')
+        updatePresence({
+          name: user.name,
+          email: user.email,
+          isEditing: true
+        })
+        
+        // Clear any existing timeout
+        if (editingTimeoutRef.current) {
+          clearTimeout(editingTimeoutRef.current)
+        }
+        
+        // Set isEditing to false after 2 seconds of inactivity
+        editingTimeoutRef.current = setTimeout(() => {
+          if (user) {
+            updatePresence({
+              name: user.name,
+              email: user.email,
+              isEditing: false
+            })
+          }
+        }, 2000)
+      }
+      
       const obj = e.target
       if (obj && (obj.type === 'i-text' || obj.type === 'textbox')) {
         updateTextBarPos(obj)
       }
+    })
+    canvas.on('object:rotating', () => {
+      // Track rotation
+      lastLocalChangeRef.current = Date.now()
+      
+      // Update presence to show user is editing
+      if (user && !isEditingTextRef.current) {
+        console.log('[Whiteboard] object:rotating - Setting isEditing to TRUE')
+        updatePresence({
+          name: user.name,
+          email: user.email,
+          isEditing: true
+        })
+        
+        // Clear any existing timeout
+        if (editingTimeoutRef.current) {
+          clearTimeout(editingTimeoutRef.current)
+        }
+        
+        // Set isEditing to false after 2 seconds of inactivity
+        editingTimeoutRef.current = setTimeout(() => {
+          if (user) {
+            updatePresence({
+              name: user.name,
+              email: user.email,
+              isEditing: false
+            })
+          }
+        }, 2000)
+      }
+    })
+    
+    // Ensure snapshots are created after object transformations complete
+    // This handles cases where object:modified might not fire automatically
+    let transformCompleteTimer = null
+    canvas.on('mouse:up', () => {
+      clearTimeout(transformCompleteTimer)
+      transformCompleteTimer = setTimeout(() => {
+        const activeObject = canvas.getActiveObject()
+        if (activeObject && !isMutingRef.current && !isDrawingRef.current) {
+          // Manually trigger object:modified to ensure snapshot is created
+          canvas.fire('object:modified', { target: activeObject })
+        }
+      }, 100)
     })
 
     const upperCanvas = canvas.upperCanvasEl ?? canvas.wrapperEl?.querySelector('canvas.upper-canvas')
@@ -1289,6 +2016,7 @@ const Whiteboard = ({
       vpt[4] += dx; vpt[5] += dy
       canvas.setViewportTransform(vpt)
       canvas.renderAll()
+      broadcastViewport() // Sync viewport with collaborators
       e.preventDefault()
       e.stopPropagation()
     }
@@ -1331,6 +2059,8 @@ const Whiteboard = ({
         vpt[5] -= e.deltaY
         canvas.setViewportTransform(vpt)
       }
+      // Sync viewport with collaborators
+      broadcastViewport()
       // Save viewport transform to localStorage
       const bid = resolveBoardId()
       if (bid) {
@@ -1372,6 +2102,10 @@ const Whiteboard = ({
       container.removeEventListener('wheel', onWheel)
       resizeObserver.disconnect()
       window.removeEventListener('beforeunload', onBeforeUnload)
+      // Clear editing timeout on cleanup
+      if (editingTimeoutRef.current) {
+        clearTimeout(editingTimeoutRef.current)
+      }
       canvas.dispose()
     }
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
@@ -1380,7 +2114,7 @@ const Whiteboard = ({
   const ctxItems = useCallback((target, selectedObjects) => {
     const c = fabricRef.current
     if (!c || !target) return []
-    const snap = () => { serializeCanvas(c); pushSnapshot() }
+    const snap = () => { serializeCanvas(c, currentSessionIdRef); pushSnapshot() }
 
     const reorderAndSnap = (moveFn) => {
       moveFn()
@@ -1492,7 +2226,7 @@ const Whiteboard = ({
       canvas.renderAll()
       localStorage.setItem('wb_background_v2', canvasBackground)
       // Only save back to DB if the board is fully loaded (avoid overwriting DB data on initial sync)
-      if (isLoadedRef.current) serializeCanvas(canvas)
+      if (isLoadedRef.current) serializeCanvas(canvas, currentSessionIdRef)
     })
   }, [canvasBackground])
 
@@ -1614,6 +2348,32 @@ const Whiteboard = ({
 
       const currentTool = toolRef.current
       if (currentTool === 'pan') return
+      
+      // Update presence to show user is editing
+      if (user && currentTool !== 'select') {
+        console.log('[Whiteboard] onMouseDown - Setting isEditing to TRUE for tool:', currentTool)
+        updatePresence({
+          name: user.name,
+          email: user.email,
+          isEditing: true
+        })
+        
+        // Clear any existing timeout
+        if (editingTimeoutRef.current) {
+          clearTimeout(editingTimeoutRef.current)
+        }
+        
+        // Set isEditing to false after 2 seconds of inactivity
+        editingTimeoutRef.current = setTimeout(() => {
+          if (user) {
+            updatePresence({
+              name: user.name,
+              email: user.email,
+              isEditing: false
+            })
+          }
+        }, 2000)
+      }
 
       if (currentTool === 'frame') {
         isDrawingRef.current = true
@@ -1831,6 +2591,16 @@ const Whiteboard = ({
 
     const onMouseUp = (opt) => {
       if (toolRef.current === 'pan') return
+      
+      // Update presence to show user stopped editing
+      if (user) {
+        console.log('[Whiteboard] onMouseUp - Setting isEditing to FALSE')
+        updatePresence({
+          name: user.name,
+          email: user.email,
+          isEditing: false
+        })
+      }
 
       if (currentShapeRef.current) {
         const obj = currentShapeRef.current
@@ -1924,7 +2694,7 @@ const Whiteboard = ({
       setTextBarPosition({ left: canvasRect.left + br.left, top: canvasRect.top + br.top, width: br.width, height: br.height })
     }
     setTextFormat(next)
-    serializeCanvas(canvas)
+    serializeCanvas(canvas, currentSessionIdRef)
     pushSnapshot()
   }, [textFormat, pushSnapshot])
 
@@ -1970,6 +2740,7 @@ const Whiteboard = ({
     >
       <canvas ref={canvasRef} />
       <LaserPointer active={tool === 'laser'} containerRef={containerRef} />
+      <PresenceIndicators containerRef={containerRef} />
       <ShapeProperties canvas={fabricRef.current} selectedObject={selectedObject} />
 
       {showTextBar && (

@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import { getMe, setToken, clearToken, getToken, shareBoard } from '../services/api'
+import { cloneElement } from 'react'
+import { getMe, setToken, clearToken, getToken } from '../services/api'
+import SessionManager from './SessionManager'
 import './Authgate.css'
 
 const SESSION_KEY = 'wb_session_v1' // kept for name/email cache only
@@ -19,7 +21,7 @@ const getAvatarColor = (email) => {
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
 
-export default function AuthGate({ children, theme }) {
+export default function AuthGate({ children, theme, boardId, currentSessionId, onSessionChange }) {
   const [user, setUser] = useState(null)
   const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
@@ -106,30 +108,6 @@ export default function AuthGate({ children, theme }) {
     setError('')
   }
 
-  // ── Share board link ──────────────────────────────────────────────────────
-  const handleShare = async () => {
-    const boardUrl = `${window.location.origin}${window.location.pathname}?board=${user.boardId}`
-    try {
-      // Mark the board as public on the backend so anyone with the link can access it
-      await shareBoard(user.boardId)
-    } catch (err) {
-      console.warn('[Share] Could not mark board as public:', err.message)
-      // Still copy the link even if the API call fails
-    }
-    try {
-      await navigator.clipboard.writeText(boardUrl)
-    } catch {
-      const el = document.createElement('textarea')
-      el.value = boardUrl
-      document.body.appendChild(el)
-      el.select()
-      document.execCommand('copy')
-      document.body.removeChild(el)
-    }
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2500)
-  }
-
   // ── Loading skeleton while re-hydrating JWT ───────────────────────────────
   if (bootstrapping) {
     return (
@@ -159,22 +137,14 @@ export default function AuthGate({ children, theme }) {
           </div>
 
           <div className="ag-topbar-right">
-            <button className={`ag-share-btn${copied ? ' copied' : ''}`} onClick={handleShare} title="Copy board link">
-              {copied ? (
-                <>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-                  Copied!
-                </>
-              ) : (
-                <>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
-                    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-                  </svg>
-                  Share Board
-                </>
-              )}
-            </button>
+            {boardId && currentSessionId && (
+              <SessionManager
+                boardId={boardId}
+                currentSessionId={currentSessionId}
+                onSessionChange={onSessionChange}
+                theme={theme}
+              />
+            )}
 
             <div className="ag-avatar-wrap" ref={profileRef}>
               <button
@@ -212,7 +182,10 @@ export default function AuthGate({ children, theme }) {
           </div>
         </div>
         <div className="ag-app-wrap">
-          {children}
+          {typeof children === 'function' 
+            ? children({ user })
+            : cloneElement(children, { user, key: user?.id || 'no-user' })
+          }
         </div>
       </>
     )

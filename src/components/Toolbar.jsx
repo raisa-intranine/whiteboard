@@ -197,6 +197,27 @@ const Toolbar = ({
           {IC.image}
         </button>
         <input ref={fileInputRef} type="file" accept="image/*" style={{display:'none'}} onChange={handleImageUpload} />
+        
+        {/* Mermaid Diagram Buttons */}
+        <button className="tool-btn" onClick={() => window.__wbShowMermaid?.('create')} data-tooltip="Create Diagram">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="7" height="7" rx="1"/>
+            <rect x="14" y="3" width="7" height="7" rx="1"/>
+            <rect x="14" y="14" width="7" height="7" rx="1"/>
+            <rect x="3" y="14" width="7" height="7" rx="1"/>
+            <line x1="10" y1="6.5" x2="14" y2="6.5"/>
+            <line x1="10" y1="17.5" x2="14" y2="17.5"/>
+            <line x1="6.5" y1="10" x2="6.5" y2="14"/>
+            <line x1="17.5" y1="10" x2="17.5" y2="14"/>
+          </svg>
+        </button>
+        
+        <button className="tool-btn" onClick={() => window.__wbShowMermaid?.('generate')} data-tooltip="Generate Diagram Code">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="16 18 22 12 16 6"/>
+            <polyline points="8 6 2 12 8 18"/>
+          </svg>
+        </button>
       </div>
 
       <div className="toolbar-section">
