@@ -664,7 +664,10 @@ const Whiteboard = ({
   const editingTimeoutRef = useRef(null)
 
   const historyRef = useRef([])
-  const historyIdxRef = useRef(-1)
+  // Per-user history index: { [email]: number }
+  // Each user has their own cursor in the shared history array so undo/redo
+  // never affects another user's position.
+  const userHistoryIdxRef = useRef({})
   const isMutingRef = useRef(false)
 
   // Update ref when prop changes
@@ -900,23 +903,34 @@ const Whiteboard = ({
       objectIds: json.objects?.map(o => o.id).filter(Boolean) || []
     }
     
+    // Get this user's current head index (default to end of history)
+    const userIdx = userHistoryIdxRef.current[userEmail] ?? (historyRef.current.length - 1)
+    
     // Avoid duplicate consecutive snapshots (prevents double-click-to-undo issue)
-    const prev = historyRef.current[historyIdxRef.current]
-    if (prev && JSON.stringify(snapshot.canvasJson) === JSON.stringify(prev.canvasJson)) {
+    const prev = historyRef.current[userIdx]
+    if (prev && prev.userEmail === userEmail && JSON.stringify(snapshot.canvasJson) === JSON.stringify(prev.canvasJson)) {
       console.log('[pushSnapshot] Skipping duplicate snapshot')
       return
     }
     
-    historyRef.current = historyRef.current.slice(0, historyIdxRef.current + 1)
+    // Truncate any snapshots by this user that came AFTER their current cursor
+    // (i.e., clear redo history for this user on new action)
+    const filtered = historyRef.current.filter((s, idx) => {
+      if (s.userEmail !== userEmail) return true   // keep other users' snapshots
+      return idx <= userIdx                        // keep only up to user's cursor
+    })
+    historyRef.current = filtered
     historyRef.current.push(snapshot)
-    historyIdxRef.current = historyRef.current.length - 1
-    console.log('[pushSnapshot] Created snapshot #' + historyIdxRef.current + ' by ' + snapshot.userEmail + ' (total: ' + historyRef.current.length + ')')
+    const newIdx = historyRef.current.length - 1
+    userHistoryIdxRef.current[userEmail] = newIdx
+    
+    console.log('[pushSnapshot] Snapshot by ' + userEmail + ' at global idx=' + newIdx + ' (total: ' + historyRef.current.length + ')')
     
     // Calculate undo/redo availability for current user only
-    const userSnapshots = historyRef.current.filter(s => s.userEmail === user?.email)
+    const userSnapshots = historyRef.current.filter(s => s.userEmail === userEmail)
     const currentUserSnapshotIndex = userSnapshots.findIndex(s => s === snapshot)
     
-    onHistoryChange?.({ 
+    onHistoryChange?.({
       canUndo: currentUserSnapshotIndex > 0, 
       canRedo: false 
     })
@@ -1048,32 +1062,35 @@ const Whiteboard = ({
       return
     }
     
-    // Find all snapshots created by current user
-    const userSnapshots = []
+    // Find all snapshots created by current user in order
     const userSnapshotIndices = []
     historyRef.current.forEach((snapshot, idx) => {
-      const snapshotEmail = snapshot?.userEmail || 'anonymous'
-      if (snapshotEmail === userEmail) {
-        userSnapshots.push(snapshot)
+      if ((snapshot?.userEmail || 'anonymous') === userEmail) {
         userSnapshotIndices.push(idx)
       }
     })
     
-    if (userSnapshots.length === 0) {
+    if (userSnapshotIndices.length === 0) {
       console.log('[undo] No snapshots found for current user')
       return
     }
     
-    // Find current position in user's snapshot history
-    const currentUserSnapshotIdx = userSnapshotIndices.indexOf(historyIdxRef.current)
+    // Get this user's own cursor (default to their latest snapshot)
+    const currentGlobalIdx = userHistoryIdxRef.current[userEmail] ?? userSnapshotIndices[userSnapshotIndices.length - 1]
+    const currentUserSnapshotIdx = userSnapshotIndices.indexOf(currentGlobalIdx)
     
-    if (currentUserSnapshotIdx <= 0) {
+    // If the cursor is not pointing to any of this user's snapshots, use the last one
+    const effectiveUserSnapshotIdx = currentUserSnapshotIdx >= 0
+      ? currentUserSnapshotIdx
+      : userSnapshotIndices.length - 1
+    
+    if (effectiveUserSnapshotIdx <= 0) {
       console.log('[undo] Already at first snapshot for current user')
       return
     }
     
-    // Go to previous snapshot created by this user
-    const targetGlobalIdx = userSnapshotIndices[currentUserSnapshotIdx - 1]
+    // Move cursor back one step in this user's snapshot list
+    const targetGlobalIdx = userSnapshotIndices[effectiveUserSnapshotIdx - 1]
     const targetSnapshot = historyRef.current[targetGlobalIdx]
     
     if (!targetSnapshot) {
@@ -1081,20 +1098,21 @@ const Whiteboard = ({
       return
     }
     
-    console.log('[undo] User ' + userEmail + ' going from snapshot #' + historyIdxRef.current + ' to #' + targetGlobalIdx)
-    historyIdxRef.current = targetGlobalIdx
+    console.log('[undo] User ' + userEmail + ' going from global idx=' + currentGlobalIdx + ' to #' + targetGlobalIdx)
+    userHistoryIdxRef.current[userEmail] = targetGlobalIdx
     applySnapshot(targetSnapshot, userEmail)  // Pass userEmail to filter objects
     
     // Update button states based on user's snapshot position
-    const canUndoMore = currentUserSnapshotIdx > 1
-    const canRedo = currentUserSnapshotIdx < userSnapshots.length - 1
+    const newUserSnapshotIdx = effectiveUserSnapshotIdx - 1
+    const canUndoMore = newUserSnapshotIdx > 0
+    const canRedo = true  // we moved back, so redo is possible
     onHistoryChange?.({ canUndo: canUndoMore, canRedo })
     
     // Save updated index to localStorage (per-session, per-user)
     const boardId = resolveBoardId()
     const sessionId = currentSessionIdRef.current
     if (boardId && sessionId && userEmail) {
-      localStorage.setItem(`wb_history_idx_${boardId}_${sessionId}_${userEmail}`, String(historyIdxRef.current))
+      localStorage.setItem(`wb_history_idx_${boardId}_${sessionId}_${userEmail}`, String(targetGlobalIdx))
     }
     
     // Save the undone state to database and broadcast immediately
@@ -1136,31 +1154,29 @@ const Whiteboard = ({
       return
     }
     
-    // Find all snapshots created by current user
-    const userSnapshots = []
+    // Find all snapshots created by current user in order
     const userSnapshotIndices = []
     historyRef.current.forEach((snapshot, idx) => {
-      const snapshotEmail = snapshot?.userEmail || 'anonymous'
-      if (snapshotEmail === userEmail) {
-        userSnapshots.push(snapshot)
+      if ((snapshot?.userEmail || 'anonymous') === userEmail) {
         userSnapshotIndices.push(idx)
       }
     })
     
-    if (userSnapshots.length === 0) {
+    if (userSnapshotIndices.length === 0) {
       console.log('[redo] No snapshots found for current user')
       return
     }
     
-    // Find current position in user's snapshot history
-    const currentUserSnapshotIdx = userSnapshotIndices.indexOf(historyIdxRef.current)
+    // Get this user's own cursor
+    const currentGlobalIdx = userHistoryIdxRef.current[userEmail] ?? userSnapshotIndices[userSnapshotIndices.length - 1]
+    const currentUserSnapshotIdx = userSnapshotIndices.indexOf(currentGlobalIdx)
     
-    if (currentUserSnapshotIdx >= userSnapshots.length - 1) {
+    if (currentUserSnapshotIdx < 0 || currentUserSnapshotIdx >= userSnapshotIndices.length - 1) {
       console.log('[redo] Already at latest snapshot for current user')
       return
     }
     
-    // Go to next snapshot created by this user
+    // Move cursor forward one step in this user's snapshot list
     const targetGlobalIdx = userSnapshotIndices[currentUserSnapshotIdx + 1]
     const targetSnapshot = historyRef.current[targetGlobalIdx]
     
@@ -1169,20 +1185,21 @@ const Whiteboard = ({
       return
     }
     
-    console.log('[redo] User ' + userEmail + ' going from snapshot #' + historyIdxRef.current + ' to #' + targetGlobalIdx)
-    historyIdxRef.current = targetGlobalIdx
+    console.log('[redo] User ' + userEmail + ' going from global idx=' + currentGlobalIdx + ' to #' + targetGlobalIdx)
+    userHistoryIdxRef.current[userEmail] = targetGlobalIdx
     applySnapshot(targetSnapshot, userEmail)  // Pass userEmail to filter objects
     
     // Update button states based on user's snapshot position
-    const canUndo = currentUserSnapshotIdx >= 0
-    const canRedoMore = currentUserSnapshotIdx < userSnapshots.length - 2
+    const newUserSnapshotIdx = currentUserSnapshotIdx + 1
+    const canUndo = newUserSnapshotIdx > 0
+    const canRedoMore = newUserSnapshotIdx < userSnapshotIndices.length - 1
     onHistoryChange?.({ canUndo, canRedo: canRedoMore })
     
     // Save updated index to localStorage (per-session, per-user)
     const boardId = resolveBoardId()
     const sessionId = currentSessionIdRef.current
     if (boardId && sessionId && userEmail) {
-      localStorage.setItem(`wb_history_idx_${boardId}_${sessionId}_${userEmail}`, String(historyIdxRef.current))
+      localStorage.setItem(`wb_history_idx_${boardId}_${sessionId}_${userEmail}`, String(targetGlobalIdx))
     }
     
     // Save to database and broadcast after snapshot is applied
@@ -1251,7 +1268,7 @@ const Whiteboard = ({
     
     // Reset history AFTER saving to DB
     historyRef.current = []
-    historyIdxRef.current = -1
+    userHistoryIdxRef.current = {}
     
     // Clear history from localStorage (per-user)
     const userEmail = user?.email
@@ -1377,7 +1394,7 @@ const Whiteboard = ({
     const container = containerRef.current
     // Reset history on mount (handles React StrictMode double-mount)
     historyRef.current = []
-    historyIdxRef.current = -1
+    userHistoryIdxRef.current = {}
     isLoadedRef.current = false
     mountedRef.current = true
     const canvas = new fabric.Canvas(canvasRef.current, {
@@ -1431,7 +1448,11 @@ const Whiteboard = ({
     }
 
     // ── Load board data from backend ──────────────────────────────────────
-    deserializeCanvas(canvas, isMutingRef, currentSessionId, (result) => {
+    // Resolve the session ID synchronously from URL/localStorage so that
+    // loading works correctly even on a hard refresh (currentSessionId React
+    // state is null on the very first render).
+    const initialSessionId = resolveSessionId() || currentSessionIdRef.current
+    deserializeCanvas(canvas, isMutingRef, initialSessionId, (result) => {
       isLoadedRef.current = true
       
       console.log('[Whiteboard] Canvas loaded. Dimensions:', canvas.getWidth(), 'x', canvas.getHeight(), 'Objects:', canvas.getObjects().length)
@@ -1482,20 +1503,22 @@ const Whiteboard = ({
       
       // Restore undo/redo history from localStorage (per-session, per-user)
       let historyRestored = false
-      if (bid && currentSessionId && user?.email) {
+      const sessionIdForHistory = initialSessionId
+      if (bid && sessionIdForHistory && user?.email) {
         try {
           const userEmail = user.email
-          const savedHistory = localStorage.getItem(`wb_history_${bid}_${currentSessionId}_${userEmail}`)
-          const savedIdx = localStorage.getItem(`wb_history_idx_${bid}_${currentSessionId}_${userEmail}`)
+          const savedHistory = localStorage.getItem(`wb_history_${bid}_${sessionIdForHistory}_${userEmail}`)
+          const savedIdx = localStorage.getItem(`wb_history_idx_${bid}_${sessionIdForHistory}_${userEmail}`)
           if (savedHistory) {
             const parsed = JSON.parse(savedHistory)
             if (Array.isArray(parsed) && parsed.length > 0) {
               historyRef.current = parsed
-              historyIdxRef.current = savedIdx ? parseInt(savedIdx, 10) : parsed.length - 1
               
-              // Ensure index is within bounds
-              if (historyIdxRef.current < 0) historyIdxRef.current = 0
-              if (historyIdxRef.current >= parsed.length) historyIdxRef.current = parsed.length - 1
+              // Restore per-user cursor from localStorage
+              let restoredIdx = savedIdx ? parseInt(savedIdx, 10) : parsed.length - 1
+              if (restoredIdx < 0) restoredIdx = 0
+              if (restoredIdx >= parsed.length) restoredIdx = parsed.length - 1
+              userHistoryIdxRef.current[userEmail] = restoredIdx
               
               // Calculate button states based on user's snapshots only
               const userSnapshots = parsed.filter(s => (s?.userEmail || 'anonymous') === userEmail)
@@ -1505,7 +1528,7 @@ const Whiteboard = ({
                   userSnapshotIndices.push(idx)
                 }
               })
-              const currentUserSnapshotIdx = userSnapshotIndices.indexOf(historyIdxRef.current)
+              const currentUserSnapshotIdx = userSnapshotIndices.indexOf(restoredIdx)
               
               // Update button states
               onHistoryChange?.({
@@ -1514,7 +1537,7 @@ const Whiteboard = ({
               })
               
               historyRestored = true
-              console.log(`[Whiteboard] Restored ${parsed.length} snapshots (${userSnapshots.length} by ${userEmail}) for session ${currentSessionId}, index: ${historyIdxRef.current}`)
+              console.log(`[Whiteboard] Restored ${parsed.length} snapshots (${userSnapshots.length} by ${userEmail}) for session ${sessionIdForHistory}, userIdx: ${restoredIdx}`)
             }
           }
         } catch (err) {
@@ -1527,23 +1550,24 @@ const Whiteboard = ({
       if (!historyRestored && canvas && canvas.lowerCanvasEl) {
         // Create initial snapshot synchronously to ensure it happens before any user interaction
         try {
+          const userEmail = user?.email || 'anonymous'
           const snapshot = {
             canvasJson: canvas.toJSON(SERIALIZE_PROPS),
-            userEmail: user?.email || 'anonymous',
+            userEmail,
             timestamp: Date.now()
           }
           historyRef.current = [snapshot]
-          historyIdxRef.current = 0
+          userHistoryIdxRef.current[userEmail] = 0
           
           // Save to localStorage (stringify for storage) (per-session, per-user)
-          if (bid && currentSessionId && user?.email) {
-            localStorage.setItem(`wb_history_${bid}_${currentSessionId}_${user.email}`, JSON.stringify([snapshot]))
-            localStorage.setItem(`wb_history_idx_${bid}_${currentSessionId}_${user.email}`, '0')
+          if (bid && sessionIdForHistory && user?.email) {
+            localStorage.setItem(`wb_history_${bid}_${sessionIdForHistory}_${user.email}`, JSON.stringify([snapshot]))
+            localStorage.setItem(`wb_history_idx_${bid}_${sessionIdForHistory}_${user.email}`, '0')
           }
           
           // Update button states
           onHistoryChange?.({ canUndo: false, canRedo: false })
-          console.log('[Whiteboard] Created initial snapshot for user:', user?.email)
+          console.log('[Whiteboard] Created initial snapshot for user:', userEmail)
         } catch (err) {
           console.warn('[Whiteboard] Failed to create initial snapshot:', err)
         }

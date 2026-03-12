@@ -25,6 +25,7 @@ const ShareModal = ({ visible, onClose, boardId, theme }) => {
   const [isPublic, setIsPublic] = useState(false)
   const [copied, setCopied] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [sendingInvite, setSendingInvite] = useState(false)
   const [removingUserId, setRemovingUserId] = useState(null)
   const [notification, setNotification] = useState(null)
   const searchTimeoutRef = useRef(null)
@@ -88,16 +89,24 @@ const ShareModal = ({ visible, onClose, boardId, theme }) => {
 
   const handleAddCollaborator = async (user) => {
     setLoading(true)
+    setSendingInvite(true)
     try {
-      await shareBoard(boardId, user.email)
+      const result = await shareBoard(boardId, user.email)
       await loadCollaborators()
       setSearchQuery('')
       setSearchResults([])
       
-      // Show success notification
+      // Show success notification with email status
+      let message = `${user.name} has been added. They can now access this board.`
+      if (result.emailSent) {
+        message += ' An invitation email has been sent.'
+      } else if (result.emailSent === false) {
+        message += ' Note: Email invitation could not be sent.'
+      }
+      
       setNotification({
         type: 'success',
-        message: `${user.name} has been added. They can now access this board.`
+        message
       })
       setTimeout(() => setNotification(null), 4000)
     } catch (err) {
@@ -109,6 +118,7 @@ const ShareModal = ({ visible, onClose, boardId, theme }) => {
       setTimeout(() => setNotification(null), 4000)
     } finally {
       setLoading(false)
+      setSendingInvite(false)
     }
   }
 
@@ -232,10 +242,18 @@ const ShareModal = ({ visible, onClose, boardId, theme }) => {
                         <div className="share-user-name">{user.name}</div>
                         <div className="share-user-email">{user.email}</div>
                       </div>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                        <line x1="12" y1="5" x2="12" y2="19" />
-                        <line x1="5" y1="12" x2="19" y2="12" />
-                      </svg>
+                      {loading ? (
+                        <div className="share-loading-spinner">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                            <path d="M21 12a9 9 0 11-6.219-8.56"/>
+                          </svg>
+                        </div>
+                      ) : (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                          <line x1="12" y1="5" x2="12" y2="19" />
+                          <line x1="5" y1="12" x2="19" y2="12" />
+                        </svg>
+                      )}
                     </button>
                   )
                 })}
@@ -311,7 +329,16 @@ const ShareModal = ({ visible, onClose, boardId, theme }) => {
               onClick={handleCopyLink}
               disabled={loading}
             >
-              {copied ? (
+              {loading ? (
+                <>
+                  <div className="share-loading-spinner">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                      <path d="M21 12a9 9 0 11-6.219-8.56"/>
+                    </svg>
+                  </div>
+                  Generating link...
+                </>
+              ) : copied ? (
                 <>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                     <polyline points="20 6 9 17 4 12" />
@@ -330,6 +357,20 @@ const ShareModal = ({ visible, onClose, boardId, theme }) => {
             </button>
           </div>
         </div>
+
+        {/* Sending Invite Loader Overlay */}
+        {sendingInvite && (
+          <div className="share-sending-overlay">
+            <div className="share-sending-content">
+              <div className="share-sending-spinner">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M21 12a9 9 0 11-6.219-8.56"/>
+                </svg>
+              </div>
+              <span className="share-sending-text">Sending invite...</span>
+            </div>
+          </div>
+        )}
 
         {/* Notification Toast */}
         {notification && (

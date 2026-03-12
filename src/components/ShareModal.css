@@ -13,8 +13,13 @@
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 .share-modal {
@@ -27,6 +32,8 @@
   display: flex;
   flex-direction: column;
   animation: slideUp 0.3s ease;
+  position: relative;
+  overflow: hidden;
 }
 
 @keyframes slideUp {
@@ -34,6 +41,7 @@
     opacity: 0;
     transform: translateY(20px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -281,6 +289,28 @@
   flex-shrink: 0;
 }
 
+.share-loading-spinner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.share-loading-spinner svg {
+  color: #1a73e8;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .share-no-results {
   padding: 16px;
   text-align: center;
@@ -430,6 +460,7 @@
     opacity: 0;
     transform: translateX(100px);
   }
+
   to {
     opacity: 1;
     transform: translateX(0);
@@ -444,6 +475,51 @@
 .share-notification.error {
   background: #ef4444;
   color: #ffffff;
+}
+
+/* Sending Invite Overlay */
+.share-sending-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(4px);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10010;
+  animation: fadeIn 0.2s ease;
+}
+
+.share-modal.dark .share-sending-overlay {
+  background: rgba(42, 45, 46, 0.85);
+}
+
+.share-sending-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.share-sending-spinner svg {
+  color: #1a73e8;
+  animation: spin 0.9s linear infinite;
+}
+
+.share-modal.dark .share-sending-spinner svg {
+  color: #8ab4f8;
+}
+
+.share-sending-text {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2937;
+  letter-spacing: 0.01em;
+}
+
+.share-modal.dark .share-sending-text {
+  color: #e8eaed;
 }
 
 /* Remove Confirmation Dialog */
