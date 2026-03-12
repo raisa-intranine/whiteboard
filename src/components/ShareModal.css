@@ -1,0 +1,592 @@
+.share-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.share-modal {
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  width: 90%;
+  max-width: 540px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.share-modal.dark {
+  background: #2a2d2e;
+  color: #e8eaed;
+}
+
+.share-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.share-modal.dark .share-modal-header {
+  border-bottom-color: #3c4043;
+}
+
+.share-modal-header h2 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+  color: #1f2937;
+}
+
+.share-modal.dark .share-modal-header h2 {
+  color: #e8eaed;
+}
+
+.share-modal-close {
+  background: none;
+  border: none;
+  padding: 8px;
+  cursor: pointer;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6b7280;
+  transition: all 0.2s;
+}
+
+.share-modal-close:hover {
+  background: #f3f4f6;
+  color: #1f2937;
+}
+
+.share-modal.dark .share-modal-close {
+  color: #9aa0a6;
+}
+
+.share-modal.dark .share-modal-close:hover {
+  background: #3c4043;
+  color: #e8eaed;
+}
+
+.share-modal-body {
+  padding: 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.share-section {
+  margin-bottom: 28px;
+}
+
+.share-section:last-child {
+  margin-bottom: 0;
+}
+
+.share-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 10px;
+}
+
+.share-modal.dark .share-label {
+  color: #e8eaed;
+}
+
+.share-description {
+  font-size: 13px;
+  color: #6b7280;
+  margin: 0 0 12px 0;
+}
+
+.share-modal.dark .share-description {
+  color: #9aa0a6;
+}
+
+.share-search-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1.5px solid #d1d5db;
+  border-radius: 8px;
+  background: #ffffff;
+  transition: all 0.2s;
+}
+
+.share-search-box:focus-within {
+  border-color: #1a73e8;
+  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.1);
+}
+
+.share-modal.dark .share-search-box {
+  background: #3c4043;
+  border-color: #5f6368;
+}
+
+.share-modal.dark .share-search-box:focus-within {
+  border-color: #8ab4f8;
+  box-shadow: 0 0 0 3px rgba(138, 180, 248, 0.1);
+}
+
+.share-search-box svg {
+  color: #9ca3af;
+  flex-shrink: 0;
+}
+
+.share-search-box input {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-size: 14px;
+  background: transparent;
+  color: #1f2937;
+}
+
+.share-modal.dark .share-search-box input {
+  color: #e8eaed;
+}
+
+.share-search-box input::placeholder {
+  color: #9ca3af;
+}
+
+.share-search-loading {
+  padding: 12px;
+  text-align: center;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.share-search-results {
+  margin-top: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.share-modal.dark .share-search-results {
+  border-color: #3c4043;
+  background: #3c4043;
+}
+
+.share-user-result {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  width: 100%;
+  border: none;
+  background: none;
+  cursor: pointer;
+  transition: background 0.2s;
+  text-align: left;
+}
+
+.share-user-result:hover {
+  background: #f9fafb;
+}
+
+.share-modal.dark .share-user-result:hover {
+  background: #5f6368;
+}
+
+.share-user-result:not(:last-child) {
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.share-modal.dark .share-user-result:not(:last-child) {
+  border-bottom-color: #5f6368;
+}
+
+.share-user-result:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.share-user-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: #ffffff;
+  flex-shrink: 0;
+}
+
+.share-user-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.share-user-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1f2937;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.share-modal.dark .share-user-name {
+  color: #e8eaed;
+}
+
+.share-user-email {
+  font-size: 12px;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.share-modal.dark .share-user-email {
+  color: #9aa0a6;
+}
+
+.share-user-result svg {
+  color: #1a73e8;
+  flex-shrink: 0;
+}
+
+.share-no-results {
+  padding: 16px;
+  text-align: center;
+  font-size: 13px;
+  color: #6b7280;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  margin-top: 8px;
+}
+
+.share-modal.dark .share-no-results {
+  border-color: #3c4043;
+  color: #9aa0a6;
+}
+
+.share-collaborators-list {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.share-modal.dark .share-collaborators-list {
+  border-color: #3c4043;
+  background: #3c4043;
+}
+
+.share-collaborator {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.share-collaborator:not(:last-child) {
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.share-modal.dark .share-collaborator:not(:last-child) {
+  border-bottom-color: #5f6368;
+}
+
+.share-user-role {
+  font-size: 12px;
+  color: #6b7280;
+  padding: 4px 10px;
+  background: #f3f4f6;
+  border-radius: 12px;
+  font-weight: 500;
+}
+
+.share-modal.dark .share-user-role {
+  background: #5f6368;
+  color: #9aa0a6;
+}
+
+.share-remove-btn {
+  background: none;
+  border: none;
+  padding: 6px;
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ef4444;
+  transition: all 0.2s;
+}
+
+.share-remove-btn:hover {
+  background: #fee2e2;
+}
+
+.share-modal.dark .share-remove-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+.share-remove-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.share-no-collaborators {
+  padding: 20px;
+  text-align: center;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.share-modal.dark .share-no-collaborators {
+  color: #9aa0a6;
+}
+
+.share-copy-link-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 20px;
+  background: #1a73e8;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.share-copy-link-btn:hover {
+  background: #1557b0;
+}
+
+.share-copy-link-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.share-copy-link-btn.copied {
+  background: #22c55e;
+}
+
+.share-copy-link-btn.copied:hover {
+  background: #16a34a;
+}
+
+/* Notification Toast */
+.share-notification {
+  position: fixed;
+  top: 80px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 10001;
+  animation: slideInRight 0.3s ease;
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(100px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.share-notification.success {
+  background: #22c55e;
+  color: #ffffff;
+}
+
+.share-notification.error {
+  background: #ef4444;
+  color: #ffffff;
+}
+
+/* Remove Confirmation Dialog */
+.share-confirm-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10002;
+  animation: fadeIn 0.2s ease;
+}
+
+.share-confirm-dialog {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 24px;
+  width: 90%;
+  max-width: 400px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  animation: slideUp 0.3s ease;
+}
+
+.share-confirm-dialog.dark {
+  background: #2a2d2e;
+  color: #e8eaed;
+}
+
+.share-confirm-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.share-confirm-header svg {
+  color: #ef4444;
+  flex-shrink: 0;
+}
+
+.share-confirm-header h3 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+  color: #1f2937;
+}
+
+.share-confirm-dialog.dark .share-confirm-header h3 {
+  color: #e8eaed;
+}
+
+.share-confirm-message {
+  font-size: 14px;
+  color: #6b7280;
+  margin: 0 0 24px 0;
+  line-height: 1.5;
+}
+
+.share-confirm-dialog.dark .share-confirm-message {
+  color: #9aa0a6;
+}
+
+.share-confirm-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.share-confirm-btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.share-confirm-btn.cancel {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.share-confirm-btn.cancel:hover {
+  background: #e5e7eb;
+}
+
+.share-confirm-btn.remove {
+  background: #ef4444;
+  color: #ffffff;
+}
+
+.share-confirm-btn.remove:hover {
+  background: #dc2626;
+}
+
+.share-confirm-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.share-confirm-dialog.dark .share-confirm-btn.cancel {
+  background: #5f6368;
+  color: #e8eaed;
+}
+
+.share-confirm-dialog.dark .share-confirm-btn.cancel:hover {
+  background: #3c4043;
+}
+
+@media (max-width: 640px) {
+  .share-modal {
+    width: 95%;
+    max-height: 90vh;
+  }
+
+  .share-modal-header {
+    padding: 16px 20px;
+  }
+
+  .share-modal-body {
+    padding: 20px;
+  }
+
+  .share-user-avatar {
+    width: 32px;
+    height: 32px;
+    font-size: 12px;
+  }
+
+  .share-notification {
+    top: 70px;
+    right: 12px;
+    left: 12px;
+    font-size: 13px;
+  }
+
+  .share-confirm-dialog {
+    width: 95%;
+    padding: 20px;
+  }
+}
