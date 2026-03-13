@@ -1,11 +1,10 @@
 services:
   - type: web
     name: whiteboard-backend
-    env: node
+    env: docker
     region: singapore
     plan: free
-    buildCommand: npm install
-    startCommand: npm start
+    dockerfilePath: ./Dockerfile
     envVars:
       - key: NODE_ENV
         value: production
