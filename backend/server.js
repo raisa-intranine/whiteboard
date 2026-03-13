@@ -26,6 +26,7 @@ const { getRealtimeToken } = require('./api/realtime/token')
 const { listSessions, createSession, getSession, updateSession, activateSession, deleteSession } = require('./api/boards/session')
 const { getHistory, saveHistory, clearHistory } = require('./api/boards/history')
 const { shareSession, getSessionCollaborators, removeSessionCollaborator, toggleSessionPrivacy } = require('./api/boards/session-share')
+const { sendBoardInvitation, sendSessionInvitation } = require('./lib/email')
 
 // Health check
 app.get('/', (req, res) => {
@@ -71,6 +72,59 @@ app.get('/api/users/search', searchUsers)
 
 // Realtime routes
 app.get('/api/realtime/token', getRealtimeToken)
+
+// Email routes
+app.post('/api/email/invite-board', async (req, res) => {
+  try {
+    const { to, boardId, inviterName, inviterEmail } = req.body
+    
+    if (!to || !boardId || !inviterName || !inviterEmail) {
+      return res.status(400).json({ error: 'Missing required fields' })
+    }
+    
+    const boardUrl = `${process.env.FRONTEND_URL}?board=${boardId}`
+    
+    await sendBoardInvitation({
+      to,
+      boardId,
+      boardUrl,
+      inviterName,
+      inviterEmail
+    })
+    
+    res.json({ success: true, message: 'Invitation sent' })
+  } catch (error) {
+    console.error('Failed to send board invitation:', error)
+    res.status(500).json({ error: 'Failed to send invitation', details: error.message })
+  }
+})
+
+app.post('/api/email/invite-session', async (req, res) => {
+  try {
+    const { to, boardId, sessionId, sessionName, inviterName, inviterEmail } = req.body
+    
+    if (!to || !boardId || !sessionId || !sessionName || !inviterName || !inviterEmail) {
+      return res.status(400).json({ error: 'Missing required fields' })
+    }
+    
+    const sessionUrl = `${process.env.FRONTEND_URL}?board=${boardId}&session=${sessionId}`
+    
+    await sendSessionInvitation({
+      to,
+      boardId,
+      sessionId,
+      sessionName,
+      sessionUrl,
+      inviterName,
+      inviterEmail
+    })
+    
+    res.json({ success: true, message: 'Invitation sent' })
+  } catch (error) {
+    console.error('Failed to send session invitation:', error)
+    res.status(500).json({ error: 'Failed to send invitation', details: error.message })
+  }
+})
 
 // Error handling middleware
 app.use((err, req, res, next) => {
