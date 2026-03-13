@@ -240,27 +240,32 @@ export default function SessionManager({ boardId, currentSessionId, onSessionCha
     setShowSuggestions(false)
     try {
       const result = await addSessionCollaborator(boardId, sessionId, shareEmail)
+      const user = auth.currentUser
+      const session = await getSession(boardId, sessionId)
       
-      // Send email if it was an invite
-      if (result.invited) {
-        const user = auth.currentUser
-        const session = await getSession(boardId, sessionId)
-        try {
-          await sendSessionInvite(
-            shareEmail, 
-            boardId, 
-            sessionId, 
-            session.name,
-            user.displayName || user.email, 
-            user.email
-          )
+      // Always send email notification (for both new invites and existing users)
+      try {
+        await sendSessionInvite(
+          shareEmail, 
+          boardId, 
+          sessionId, 
+          session.name,
+          user.displayName || user.email, 
+          user.email
+        )
+        
+        if (result.invited) {
           showToast(`Invitation email sent to ${shareEmail}!`, 'success')
-        } catch (emailErr) {
-          console.error('Failed to send email:', emailErr)
-          showToast(`${shareEmail} added (email notification failed)`, 'success')
+        } else {
+          showToast(`Session shared with ${shareEmail} (email sent)`, 'success')
         }
-      } else {
-        showToast(`Session shared with ${shareEmail}`, 'success')
+      } catch (emailErr) {
+        console.error('Failed to send email:', emailErr)
+        if (result.invited) {
+          showToast(`${shareEmail} invited (email notification failed)`, 'success')
+        } else {
+          showToast(`Session shared with ${shareEmail} (email notification failed)`, 'success')
+        }
       }
       
       setShareEmail('')

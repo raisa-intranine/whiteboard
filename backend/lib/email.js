@@ -1,43 +1,35 @@
-const nodemailer = require('nodemailer')
+const { BrevoClient } = require('@getbrevo/brevo')
 
-// Create reusable transporter
-const createTransporter = () => {
-  // Use environment variables for SMTP configuration
-  const port = parseInt(process.env.SMTP_PORT || '465')
-  const config = {
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: port,
-    secure: port === 465, // true for 465, false for other ports
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS?.replace(/\s+/g, ''), // Remove spaces from app password
-    },
-  }
-
-  // If no SMTP credentials, log warning and return null
-  if (!config.auth.user || !config.auth.pass) {
-    console.warn('[Email] SMTP credentials not configured. Email notifications disabled.')
-    console.warn('[Email] Set SMTP_USER and SMTP_PASS in .env file')
+// Create Brevo client
+const createBrevoClient = () => {
+  const apiKey = process.env.BREVO_API_KEY
+  
+  if (!apiKey) {
+    console.warn('[Email] Brevo API key not configured. Email notifications disabled.')
+    console.warn('[Email] Set BREVO_API_KEY in .env file')
     return null
   }
 
-  return nodemailer.createTransport(config)
+  return new BrevoClient({ apiKey })
 }
 
 // Send board invitation email
 const sendBoardInvitation = async ({ to, boardId, boardUrl, inviterName, inviterEmail }) => {
-  const transporter = createTransporter()
+  const client = createBrevoClient()
   
-  if (!transporter) {
-    console.log('[Email] Skipping email to', to, '- SMTP not configured')
-    throw new Error('SMTP not configured')
+  if (!client) {
+    console.log('[Email] Skipping email to', to, '- Brevo not configured')
+    throw new Error('Brevo not configured')
   }
 
-  const mailOptions = {
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
-    to,
+  const emailData = {
+    sender: { 
+      email: process.env.BREVO_SENDER_EMAIL || inviterEmail,
+      name: process.env.BREVO_SENDER_NAME || 'Whiteboard'
+    },
+    to: [{ email: to }],
     subject: `${inviterName} invited you to collaborate on a whiteboard`,
-    html: `
+    htmlContent: `
       <!DOCTYPE html>
       <html>
       <head>
@@ -86,7 +78,7 @@ const sendBoardInvitation = async ({ to, boardId, boardUrl, inviterName, inviter
       </body>
       </html>
     `,
-    text: `
+    textContent: `
 ${inviterName} invited you to collaborate on a whiteboard
 
 Hi there!
@@ -102,33 +94,36 @@ What you can do:
 Open the whiteboard: ${boardUrl}
 
 This invitation was sent by ${inviterName}. If you didn't expect this, you can safely ignore this email.
-    `.trim(),
+    `.trim()
   }
 
   try {
-    const info = await transporter.sendMail(mailOptions)
-    console.log('[Email] Sent invitation to', to, '- Message ID:', info.messageId)
-    return { success: true, messageId: info.messageId }
+    const result = await client.transactionalEmails.sendTransacEmail(emailData)
+    console.log('[Email] Sent invitation to', to, '- Message ID:', result.messageId)
+    return { success: true, messageId: result.messageId }
   } catch (error) {
-    console.error('[Email] Failed to send to', to, ':', error.message)
+    console.error('[Email] Failed to send to', to, ':', error)
     throw error
   }
 }
 
 // Send session invitation email
 const sendSessionInvitation = async ({ to, boardId, sessionId, sessionName, sessionUrl, inviterName, inviterEmail }) => {
-  const transporter = createTransporter()
+  const client = createBrevoClient()
   
-  if (!transporter) {
-    console.log('[Email] Skipping email to', to, '- SMTP not configured')
-    throw new Error('SMTP not configured')
+  if (!client) {
+    console.log('[Email] Skipping email to', to, '- Brevo not configured')
+    throw new Error('Brevo not configured')
   }
 
-  const mailOptions = {
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
-    to,
+  const emailData = {
+    sender: { 
+      email: process.env.BREVO_SENDER_EMAIL || inviterEmail,
+      name: process.env.BREVO_SENDER_NAME || 'Whiteboard'
+    },
+    to: [{ email: to }],
     subject: `${inviterName} shared a canvas session "${sessionName}" with you`,
-    html: `
+    htmlContent: `
       <!DOCTYPE html>
       <html>
       <head>
@@ -180,7 +175,7 @@ const sendSessionInvitation = async ({ to, boardId, sessionId, sessionName, sess
       </body>
       </html>
     `,
-    text: `
+    textContent: `
 ${inviterName} shared a canvas session with you
 
 Hi there!
@@ -196,15 +191,15 @@ What you can do:
 Open the session: ${sessionUrl}
 
 This invitation was sent by ${inviterName}. If you didn't expect this, you can safely ignore this email.
-    `.trim(),
+    `.trim()
   }
 
   try {
-    const info = await transporter.sendMail(mailOptions)
-    console.log('[Email] Sent session invitation to', to, '- Message ID:', info.messageId)
-    return { success: true, messageId: info.messageId }
+    const result = await client.transactionalEmails.sendTransacEmail(emailData)
+    console.log('[Email] Sent session invitation to', to, '- Message ID:', result.messageId)
+    return { success: true, messageId: result.messageId }
   } catch (error) {
-    console.error('[Email] Failed to send to', to, ':', error.message)
+    console.error('[Email] Failed to send to', to, ':', error)
     throw error
   }
 }
