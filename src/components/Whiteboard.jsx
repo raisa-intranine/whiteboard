@@ -4,7 +4,7 @@ import ShapeProperties from './ShapeProperties'
 import LaserPointer from './Laserpointer'
 import PresenceIndicators from './PresenceIndicators'
 import './Whiteboard.css'
-import { getBoard, updateBoard, getSession, updateSession, subscribeToBoard, subscribeToSession, updatePresence as firestoreUpdatePresence, subscribeToPresence, removePresence, createBoard, createSession as firestoreCreateSession, saveUserHistorySnapshot, getUserHistory, updateUserHistoryIndex, clearUserHistory, clearAllSessionHistory, deleteUserHistorySnapshots } from '../services/firestore'
+import { getBoard, updateBoard, getSession, getSessions, updateSession, subscribeToBoard, subscribeToSession, updatePresence as firestoreUpdatePresence, subscribeToPresence, removePresence, createBoard, createSession as firestoreCreateSession, saveUserHistorySnapshot, getUserHistory, updateUserHistoryIndex, clearUserHistory, clearAllSessionHistory, deleteUserHistorySnapshots } from '../services/firestore'
 
 // Import realtime service to sync state
 import * as realtimeService from '../services/realtime-firestore'
