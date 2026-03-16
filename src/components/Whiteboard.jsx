@@ -28,6 +28,7 @@ const isRealtimeConnected = () => realtimeService.isRealtimeConnected()
 const publishViewportSync = (viewport) => realtimeService.publishViewportSync(viewport)
 const onViewportSync = (callback) => realtimeService.onViewportSync(callback)
 const setViewportSyncEnabled = (enabled) => realtimeService.setViewportSyncEnabled(enabled)
+const publishSelection = (objectId) => realtimeService.publishSelection(objectId)
 
 
 const SHAPE_TYPES = ['rect', 'circle', 'triangle', 'polygon', 'ellipse', 'group', 'i-text', 'textbox', 'image']
@@ -137,11 +138,10 @@ const saveToSessionImmediate = async (boardId, sessionId, canvasJson, background
 const getSerializedCanvas = (canvas) => {
   const json = canvas.toJSON(SERIALIZE_PROPS)
   
-  // Post-process: Remove pattern objects entirely and rely on fillPatternType for recreation
   if (json.objects) {
+    // Strip remote selection overlays and pattern fills
+    json.objects = json.objects.filter(obj => !obj.isRemoteSelection)
     json.objects.forEach(obj => {
-      // If object has a pattern fill (any object type), replace it with transparent
-      // The pattern will be recreated from fillPatternType/fillPatternColor on load
       if (obj.fill && typeof obj.fill === 'object' && obj.fill !== null) {
         console.log('[getSerializedCanvas] Stripping pattern from object:', obj.type, 'fillPatternType:', obj.fillPatternType)
         obj.fill = 'transparent'
@@ -375,6 +375,17 @@ const mergeCanvasObjects = (canvas, newCanvasJson, isMutingRef, onDone) => {
     }
   })
   
+  // Restore z-order to match the incoming canvas
+  newObjects.forEach((newObj, targetIndex) => {
+    if (!newObj.id) return
+    const existingObj = currentMap[newObj.id]
+    if (!existingObj) return
+    const currentIndex = canvas.getObjects().indexOf(existingObj)
+    if (currentIndex !== targetIndex) {
+      canvas.moveTo(existingObj, targetIndex)
+    }
+  })
+
   if (addedCount > 0 || updatedCount > 0 || removedCount > 0) {
     console.log('[mergeCanvasObjects] Merged: ' + addedCount + ' added, ' + updatedCount + ' updated, ' + removedCount + ' removed')
   }
@@ -918,11 +929,74 @@ const Whiteboard = ({
   const colorRef = useRef(color)
   const strokeRef = useRef(strokeWidth)
   const toolRef = useRef(tool)
+  const onMutationRef = useRef(null) // set once onMutation is defined inside the canvas useEffect
+  const broadcastCanvasRef = useRef(null) // set once broadcastCanvas is defined inside the canvas useEffect
 
   useEffect(() => { fillRef.current = fillShape }, [fillShape])
   useEffect(() => { colorRef.current = color }, [color])
   useEffect(() => { strokeRef.current = strokeWidth }, [strokeWidth])
   useEffect(() => { toolRef.current = tool }, [tool])
+
+  // Apply color change to currently selected object(s)
+  useEffect(() => {
+    const canvas = fabricRef.current
+    if (!canvas) return
+    const active = canvas.getActiveObject()
+    if (!active) return
+
+    const targets = active.type === 'activeSelection'
+      ? active.getObjects()
+      : [active]
+
+    let changed = false
+    targets.forEach(obj => {
+      if (obj.isEraserStroke || obj.isFrame) return
+      if (obj.type === 'path' || obj.type === 'line') {
+        obj.set({ stroke: color })
+      } else {
+        obj.set({ stroke: color })
+        if (fillRef.current && obj.fill !== 'rgba(255,255,255,0.01)') {
+          obj.set({ fill: color })
+        }
+      }
+      obj.setCoords()
+      changed = true
+    })
+
+    if (changed) {
+      canvas.requestRenderAll()
+      onMutationRef.current?.()
+    }
+  }, [color]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Apply fill toggle to currently selected object(s)
+  useEffect(() => {
+    const canvas = fabricRef.current
+    if (!canvas) return
+    const active = canvas.getActiveObject()
+    if (!active) return
+
+    const targets = active.type === 'activeSelection'
+      ? active.getObjects()
+      : [active]
+
+    let changed = false
+    targets.forEach(obj => {
+      if (obj.isEraserStroke || obj.isFrame || obj.type === 'path' || obj.type === 'line') return
+      if (fillShape) {
+        obj.set({ fill: colorRef.current })
+      } else {
+        obj.set({ fill: 'rgba(255,255,255,0.01)' })
+      }
+      obj.setCoords()
+      changed = true
+    })
+
+    if (changed) {
+      canvas.requestRenderAll()
+      onMutationRef.current?.()
+    }
+  }, [fillShape]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Notify parent about boardId when component mounts
   useEffect(() => {
@@ -1134,6 +1208,17 @@ const Whiteboard = ({
     .then(() => {
       if (!isActive) return
       console.log('[Whiteboard] Successfully entered presence')
+
+      // Heartbeat: keep lastSeen fresh so viewers don't get filtered out as stale
+      const heartbeatInterval = setInterval(() => {
+        if (!isActive) return
+        updatePresence({
+          name: user.name,
+          email: user.email,
+          isEditing: false
+        })
+      }, 30000) // every 30 seconds
+      window._presenceHeartbeat = heartbeatInterval
       
       // Subscribe to viewport sync
       const unsubViewport = onViewportSync((data) => {
@@ -1174,6 +1259,12 @@ const Whiteboard = ({
       // Mark effect as inactive
       isActive = false
       
+      // Cleanup heartbeat
+      if (window._presenceHeartbeat) {
+        clearInterval(window._presenceHeartbeat)
+        window._presenceHeartbeat = null
+      }
+
       // Cleanup viewport subscription
       if (window._unsubViewport) {
         window._unsubViewport()
@@ -1227,31 +1318,39 @@ const Whiteboard = ({
     
     // When creating a new snapshot after undo, we need to:
     // 1. Remove future snapshots from in-memory array
-    // 2. Delete those snapshots from Firestore
-    const snapshotsToDelete = historyRef.current.slice(historyIdxRef.current + 1)
+    // 2. Delete ALL user history from Firestore and re-save only the kept snapshots
+    //    (ID-based deletion is unreliable because IDs are set asynchronously)
+    const isBranching = historyIdxRef.current < historyRef.current.length - 1
     
-    if (snapshotsToDelete.length > 0) {
-      console.log('[pushSnapshot] Branching history - deleting', snapshotsToDelete.length, 'future snapshots')
-      
-      // Get IDs of snapshots to delete (only for current user)
-      const snapshotIdsToDelete = snapshotsToDelete
-        .filter(s => s.userEmail === userEmail && s.id) // Only delete current user's snapshots
-        .map(s => s.id)
-      
-      if (snapshotIdsToDelete.length > 0) {
-        const boardId = resolveBoardId()
-        const sessionId = currentSessionIdRef.current
-        if (boardId && sessionId) {
-          // Delete from Firestore asynchronously
-          deleteUserHistorySnapshots(boardId, sessionId, snapshotIdsToDelete)
-            .catch(err => console.warn('[pushSnapshot] Failed to delete future snapshots:', err))
-        }
-      }
-    }
-    
+    // Trim in-memory history to current position
     historyRef.current = historyRef.current.slice(0, historyIdxRef.current + 1)
     historyRef.current.push(snapshot)
     historyIdxRef.current = historyRef.current.length - 1
+    
+    if (isBranching) {
+      console.log('[pushSnapshot] Branching history - clearing Firestore and re-saving kept snapshots')
+      const boardId = resolveBoardId()
+      const sessionId = currentSessionIdRef.current
+      if (boardId && sessionId && userEmail) {
+        // Get the snapshots to keep (all user snapshots up to and including the new one)
+        const snapshotsToKeep = historyRef.current.filter(s => s.userEmail === userEmail)
+        
+        // Clear all user history from Firestore, then re-save kept snapshots in order
+        clearUserHistory(boardId, sessionId, userEmail)
+          .then(async () => {
+            // Re-save all kept snapshots (excluding the new one which gets saved below)
+            for (const s of snapshotsToKeep.slice(0, -1)) {
+              try {
+                const newId = await saveUserHistorySnapshot(boardId, sessionId, userEmail, s)
+                s.id = newId
+              } catch (err) {
+                console.warn('[pushSnapshot] Failed to re-save kept snapshot:', err)
+              }
+            }
+          })
+          .catch(err => console.warn('[pushSnapshot] Failed to clear history for branching:', err))
+      }
+    }
     console.log('[pushSnapshot] Created snapshot #' + historyIdxRef.current + ' by ' + snapshot.userEmail + ' (total: ' + historyRef.current.length + ')')
     
     // Calculate undo/redo availability for current user only
@@ -1361,6 +1460,17 @@ const Whiteboard = ({
             objectsToAdd.push(snapshotObj)
           }
         }
+      }
+    })
+
+    // Restore z-order: move each existing object to match its index in the snapshot
+    snapshotObjects.forEach((snapshotObj, targetIndex) => {
+      if (!snapshotObj.id) return
+      const existingObj = currentObjectMap[snapshotObj.id]
+      if (!existingObj) return
+      const currentIndex = canvas.getObjects().indexOf(existingObj)
+      if (currentIndex !== targetIndex) {
+        canvas.moveTo(existingObj, targetIndex)
       }
     })
     
@@ -1875,9 +1985,10 @@ const Whiteboard = ({
         shadow: new fabric.Shadow({ color: 'rgba(0,0,0,.12)', blur: 12, offsetX: 0, offsetY: 3 }),
       })
       canvas.add(img)
-      canvas.sendToBack(img)
+      canvas.bringToFront(img)
       canvas.setActiveObject(img)
       canvas.renderAll()
+      setTool('select')
       
       // Trigger synchronization after image is loaded and added
       setTimeout(() => {
@@ -1885,7 +1996,7 @@ const Whiteboard = ({
         publishFullCanvas()
       }, 100)
     })
-  }, [])
+  }, [setTool])
 
   // Function to reload canvas when session changes
   const reloadSession = useCallback((sessionId) => {
@@ -2152,7 +2263,8 @@ const Whiteboard = ({
       })
     }, 300) // Reduced to 300ms for faster real-time updates
 
-    // Throttled function to broadcast viewport changes
+    // Expose broadcastCanvas via ref so ctxItems (outside this effect) can call it directly
+    broadcastCanvasRef.current = broadcastCanvas
     const broadcastViewport = throttle(() => {
       if (!boardId || !canvas || !canvas.viewportTransform) return
       const vpt = canvas.viewportTransform
@@ -2206,6 +2318,7 @@ const Whiteboard = ({
       // Broadcast full canvas to collaborators
       broadcastCanvas()
     }
+    onMutationRef.current = onMutation
     
     // Assign unique IDs to new objects for merge conflict resolution
     canvas.on('object:added', (e) => {
@@ -2318,6 +2431,8 @@ const Whiteboard = ({
       syncTextBar(o)
       updateTextBarPos(o)
       highlightLines(e.selected || [])
+      // Publish selection to other users
+      if (user && o?.id) publishSelection(o.id)
     })
     canvas.on('selection:updated', (e) => {
       const o = e.selected?.[0]
@@ -2325,12 +2440,16 @@ const Whiteboard = ({
       syncTextBar(o)
       updateTextBarPos(o)
       highlightLines(e.selected || [])
+      // Publish selection to other users
+      if (user && o?.id) publishSelection(o.id)
     })
     canvas.on('selection:cleared', () => {
       setSelectedObject(null)
       setShowTextBar(false)
       setTextBarPosition(null)
       highlightLines([])
+      // Clear selection for other users
+      if (user) publishSelection(null)
     })
 
     // Track when user is editing text to prevent database polling from interrupting
@@ -2687,7 +2806,13 @@ const Whiteboard = ({
         c.setActiveObject(target)
         target.setCoords()
         c.renderAll()
-        snap()
+        // Save + push snapshot for undo
+        serializeCanvas(c, currentSessionIdRef)
+        pushSnapshot()
+        // Broadcast directly (unthrottled) so z-order change reaches collaborators immediately
+        const canvasJson = getSerializedCanvas(c)
+        const background = c.backgroundColor || '#ffffff'
+        publishFullCanvas({ type: 'canvas:full', canvasJson, background })
       })
     }
 
@@ -2740,8 +2865,10 @@ const Whiteboard = ({
     if (items.length > 0) items.push({ divider: true })
 
     items.push(
-      { label: 'Bring Forward', icon: 'forward', action: () => reorderAndSnap(() => c.bringForward(target)) },
-      { label: 'Send Backward', icon: 'backward', action: () => reorderAndSnap(() => c.sendBackwards(target)) },
+      { label: 'Bring to Front', icon: 'front',    action: () => reorderAndSnap(() => c.bringToFront(target)) },
+      { label: 'Bring Forward',  icon: 'forward',  action: () => reorderAndSnap(() => c.bringForward(target)) },
+      { label: 'Send Backward',  icon: 'backward', action: () => reorderAndSnap(() => c.sendBackwards(target)) },
+      { label: 'Send to Back',   icon: 'back',     action: () => reorderAndSnap(() => c.sendToBack(target)) },
       { divider: true },
       {
         label: 'Duplicate', icon: 'copy',
@@ -3341,7 +3468,7 @@ const Whiteboard = ({
     >
       <canvas ref={canvasRef} />
       <LaserPointer active={tool === 'laser'} containerRef={containerRef} />
-      <PresenceIndicators containerRef={containerRef} />
+      <PresenceIndicators containerRef={containerRef} fabricRef={fabricRef} />
       <ShapeProperties canvas={fabricRef.current} selectedObject={selectedObject} />
 
       {showTextBar && (

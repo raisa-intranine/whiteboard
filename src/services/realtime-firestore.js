@@ -394,6 +394,22 @@ export const setViewportSyncEnabled = (enabled) => {
 }
 
 /**
+ * Publish selected object ID to presence (so other users can see what you've selected)
+ */
+export const publishSelection = async (selectedObjectId) => {
+  if (!currentBoardId || !currentSessionId || !auth.currentUser) return
+  try {
+    const presenceRef = doc(db, 'boards', currentBoardId, 'sessions', currentSessionId, 'presence', auth.currentUser.uid)
+    await setDoc(presenceRef, {
+      selectedObjectId: selectedObjectId || null,
+      lastSeen: serverTimestamp()
+    }, { merge: true })
+  } catch (err) {
+    console.warn('[Realtime] Failed to publish selection:', err)
+  }
+}
+
+/**
  * Disconnect and clean up (session-specific presence)
  */
 export const disconnectRealtime = async () => {

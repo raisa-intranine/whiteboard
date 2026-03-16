@@ -15,7 +15,7 @@
   --tb-radius-md:     10px;
   --tb-radius-lg:     14px;
   --tb-radius-pill:   999px;
-  --tb-height:        64px;
+  --tb-height:        52px;
   --tb-ease:          cubic-bezier(.4,0,.2,1);
   --tb-duration:      140ms;
   --tb-shadow-sm:     0 1px 3px rgba(0,0,0,.07),0 1px 2px rgba(0,0,0,.04);
@@ -42,7 +42,7 @@
   display: flex;
   align-items: center;
   height: var(--tb-height);
-  padding: 0 16px;
+  padding: 0 8px;
   background: var(--tb-bg);
   border-bottom: 1px solid var(--tb-border);
   box-shadow: var(--tb-shadow-sm);
@@ -50,19 +50,25 @@
   color: var(--tb-text);
   z-index: 100;
   user-select: none;
+  overflow: visible;
   transition: background var(--tb-duration) var(--tb-ease),
               border-color var(--tb-duration) var(--tb-ease);
 }
 
-.toolbar-left  { display:flex; align-items:center; gap:4px; margin-right:8px; }
-.toolbar-right { display:flex; align-items:center; gap:4px; margin-left:auto; }
+.toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+.toolbar-left  { display:flex; align-items:center; gap:4px; margin-right:6px; flex-shrink:0; }
+.toolbar-right { display:flex; align-items:center; gap:4px; margin-left:auto; flex-shrink:0; }
 
 .toolbar-section {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 0 10px;
+  padding: 0 6px;
   position: relative;
+  flex-shrink: 0;
 }
 .toolbar-section + .toolbar-section::before {
   content: '';
@@ -79,7 +85,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 38px; height: 38px;
+  width: 36px; height: 36px;
   border: none;
   background: transparent;
   border-radius: var(--tb-radius-md);
@@ -168,8 +174,8 @@
 
 /* stroke */
 .stroke-width-control { display:flex; align-items:center; gap:7px; padding:0 4px; }
-.stroke-width-control label { font-size:11px; font-weight:500; text-transform:uppercase; letter-spacing:.5px; color:var(--tb-text-muted); white-space:nowrap; }
-.stroke-width-control input[type="range"] { -webkit-appearance:none; appearance:none; width:84px; height:4px; border-radius:2px; background:var(--tb-divider); outline:none; cursor:pointer; }
+.stroke-width-control label { font-size:11px; font-weight:500; text-transform:uppercase; letter-spacing:.5px; color:var(--tb-text-muted); white-space:nowrap; display: none; }
+.stroke-width-control input[type="range"] { -webkit-appearance:none; appearance:none; width:60px; height:4px; border-radius:2px; background:var(--tb-divider); outline:none; cursor:pointer; }
 .stroke-width-control input[type="range"]::-webkit-slider-thumb { -webkit-appearance:none; width:15px; height:15px; border-radius:50%; background:var(--tb-accent); border:2.5px solid var(--tb-bg); box-shadow:0 0 0 1.5px var(--tb-accent); cursor:pointer; transition:transform var(--tb-duration) var(--tb-ease); }
 .stroke-width-control input[type="range"]::-webkit-slider-thumb:hover { transform:scale(1.2); }
 .stroke-width-control span { font-size:11px; font-weight:600; color:var(--tb-text-muted); min-width:20px; text-align:right; font-variant-numeric:tabular-nums; }
@@ -339,284 +345,110 @@
 }
 
 /* ── Responsive ───────────────────────────────────────── */
-@media (max-width: 900px) {
-  .laser-label, .export-label, .frame-label { display:none; }
-  .export-btn, .laser-btn, .frame-btn { width:38px; padding:0; justify-content:center; }
-  .stroke-width-control input[type="range"] { width:56px; }
+
+/* 1200px: collapse right-side pill buttons to icon-only, hide diagram, shrink slider */
+@media (max-width: 1200px) {
+  .laser-label, .export-label, .frame-label { display: none; }
+  .export-btn, .laser-btn, .frame-btn { width: 34px; padding: 0; justify-content: center; border-radius: var(--tb-radius-md); }
+  .toolbar-section { padding: 0 4px; }
+  .tool-btn[data-tooltip="Diagram"] { display: none; }
+  .stroke-width-control input[type="range"] { width: 40px; }
 }
 
+/* 1080px: tighten everything, shrink buttons */
+@media (max-width: 1080px) {
+  .toolbar { padding: 0 6px; }
+  .toolbar-section { padding: 0 2px; gap: 1px; }
+  .tool-btn, .menu-btn { width: 32px; height: 32px; }
+  .tool-btn svg, .menu-btn svg { width: 17px; height: 17px; }
+  .shapes-trigger { padding: 0 4px; }
+  .stroke-width-control { gap: 3px; }
+  .stroke-width-control input[type="range"] { width: 32px; }
+  .stroke-width-control span { min-width: 12px; font-size: 10px; }
+  .fill-toggle-btn { height: 26px; padding: 0 5px 0 3px; }
+  .fill-toggle-btn__label { display: none; }
+  .fill-toggle-btn__track { width: 22px; height: 12px; }
+  .fill-toggle-btn__thumb { width: 9px; height: 9px; }
+  .fill-toggle-btn.on .fill-toggle-btn__thumb { left: 11.5px; }
+  .color-display { width: 24px; height: 24px; }
+  .tool-btn.zoom-label { width: 34px; padding: 0 3px; font-size: 11px; }
+  .toolbar-sep { margin: 0 1px; }
+  .export-btn { display: none; }
+}
+
+/* 960px: hide zoom label, hide stroke number, hide stroke control */
+@media (max-width: 960px) {
+  .toolbar { padding: 0 4px; }
+  .toolbar-section { padding: 0 1px; gap: 0; }
+  .tool-btn, .menu-btn { width: 30px; height: 30px; }
+  .tool-btn svg, .menu-btn svg { width: 16px; height: 16px; }
+  .stroke-width-control { display: none; }
+  .fill-toggle-btn { display: none; }
+  .tool-btn.zoom-label { display: none; }
+  .toolbar-left { margin-right: 4px; }
+}
+
+/* 768px: mobile — scrollable tool row, hide non-essential controls */
 @media (max-width: 768px) {
-  .toolbar { 
-    flex-wrap: wrap; 
-    height: auto; 
-    min-height: var(--tb-height); 
-    padding: 8px 12px; 
-    row-gap: 6px;
+  .toolbar {
+    padding: 0 6px;
+    gap: 0;
     overflow-x: auto;
     overflow-y: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: var(--tb-divider) transparent;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap;
   }
-  .toolbar-section { 
-    padding: 0 6px; 
+  .toolbar::-webkit-scrollbar { height: 3px; display: block; }
+  .toolbar::-webkit-scrollbar-track { background: transparent; }
+  .toolbar::-webkit-scrollbar-thumb { background: var(--tb-divider); border-radius: 2px; }
+
+  .toolbar-left { margin-right: 4px; flex-shrink: 0; }
+  .toolbar-right { margin-left: 4px; flex-shrink: 0; }
+
+  .toolbar-section {
+    padding: 0 2px;
     gap: 1px;
+    flex-shrink: 0;
   }
   .toolbar-section + .toolbar-section::before { display: none; }
-  .tool-btn, .menu-btn { 
-    width: 34px; 
-    height: 34px; 
-  }
-  .stroke-width-control { 
-    gap: 4px; 
-  }
-  .stroke-width-control label { display: none; }
-  .stroke-width-control input[type="range"] { width: 50px; }
-  .stroke-width-control span { font-size: 10px; min-width: 16px; }
-  .palette-grid { grid-template-columns: repeat(5, 26px); gap: 5px; }
+
+  .tool-btn, .menu-btn { width: 34px; height: 34px; flex-shrink: 0; }
+  .tool-btn svg, .menu-btn svg { width: 17px; height: 17px; }
+
+  /* Hide non-essential sections on mobile */
+  .stroke-width-control { display: none; }
+  .fill-toggle-btn { display: none; }
+  .tool-btn.zoom-label { display: none; }
+
+  /* Hide frame, laser, export from right side — too wide */
+  .frame-btn, .laser-btn, .export-btn { display: none; }
+  .toolbar-sep { display: none; }
+  .toolbar-right { display: none; }
+
+  /* Color swatch stays but smaller */
   .color-display { width: 26px; height: 26px; }
-  .wb-text-bar { 
-    top: 8px; 
-    padding: 5px 8px; 
-    flex-wrap: wrap;
-    max-width: 90vw;
-  }
+
+  .wb-text-bar { top: 8px; padding: 5px 8px; flex-wrap: wrap; max-width: 90vw; }
   .wb-text-bar__font-btn { min-width: 90px; height: 28px; font-size: 12px; }
   .wb-text-bar__size-btn { width: 24px; height: 24px; }
   .wb-text-bar__size-input { width: 38px; height: 26px; font-size: 12px; }
   .wb-text-bar__fmt-btn { width: 28px; height: 28px; }
-  .shapes-trigger { padding: 0 6px; }
-  .fill-toggle-btn { height: 28px; padding: 0 8px 0 5px; }
-  .fill-toggle-btn__track { width: 24px; height: 13px; }
-  .fill-toggle-btn__thumb { width: 10px; height: 10px; }
-  .fill-toggle-btn.on .fill-toggle-btn__thumb { left: 12.5px; }
 }
 
+/* 480px: very small phones — tighter buttons */
 @media (max-width: 480px) {
-  .toolbar { 
-    padding: 6px 8px; 
-    justify-content: flex-start;
-    gap: 4px;
-  }
-  .toolbar-left { margin-right: 4px; }
-  .toolbar-right { margin-left: auto; }
-  .toolbar-section { padding: 0 4px; }
-  .tool-btn, .menu-btn { width: 32px; height: 32px; }
-  .stroke-width-control input[type="range"] { width: 40px; }
-  .fill-toggle-btn__label { font-size: 11px; }
-  .color-palette { 
-    min-width: 140px;
-  }
-  .shapes-menu { 
-    min-width: 150px;
-  }
-  .wb-ctx-menu { 
-    min-width: 180px;
-  }
-  .wb-ctx-item { 
-    padding: 7px 8px; 
-    font-size: 12px;
-  }
+  .toolbar { padding: 0 4px; }
+  .tool-btn, .menu-btn { width: 30px; height: 30px; }
+  .tool-btn svg, .menu-btn svg { width: 15px; height: 15px; }
+  .color-display { width: 24px; height: 24px; }
+  .toolbar-section { gap: 0; padding: 0 1px; }
 }
 
 /* Touch device optimizations */
 @media (hover: none) and (pointer: coarse) {
-  .tool-btn, .menu-btn { 
-    min-width: 40px; 
-    min-height: 40px; 
-  }
-  .color-swatch { 
-    width: 32px; 
-    height: 32px; 
-  }
-  .wb-ctx-item { 
-    padding: 10px 12px; 
-    font-size: 13px;
-  }
-}
-
-
-/* Extra small devices (320px and above) */
-@media (max-width: 320px) {
-  .toolbar {
-    padding: 4px 6px;
-    gap: 2px;
-  }
-  
-  .toolbar-section {
-    padding: 0 3px;
-    gap: 1px;
-  }
-  
-  .tool-btn, .menu-btn {
-    width: 28px;
-    height: 28px;
-  }
-  
-  .tool-btn svg, .menu-btn svg {
-    width: 16px;
-    height: 16px;
-  }
-  
-  .stroke-width-control {
-    display: none; /* Hide on very small screens */
-  }
-  
-  .fill-toggle-btn {
-    height: 26px;
-    padding: 0 6px 0 4px;
-    font-size: 10px;
-  }
-  
-  .fill-toggle-btn__track {
-    width: 20px;
-    height: 12px;
-  }
-  
-  .fill-toggle-btn__thumb {
-    width: 9px;
-    height: 9px;
-  }
-  
-  .fill-toggle-btn.on .fill-toggle-btn__thumb {
-    left: 10px;
-  }
-  
-  .color-display {
-    width: 24px;
-    height: 24px;
-  }
-  
-  .shapes-trigger {
-    padding: 0 4px;
-    gap: 2px;
-  }
-  
-  .shapes-trigger svg {
-    width: 16px;
-    height: 16px;
-  }
-  
-  /* Color palette responsive */
-  .color-palette {
-    min-width: 100px;
-    max-width: calc(100vw - 20px);
-    padding: 8px;
-  }
-  
-  .color-palette::before {
-    display: none; /* Hide arrow on small screens */
-  }
-  
-  .palette-label {
-    font-size: 9px;
-    margin-bottom: 6px;
-  }
-  
-  .palette-grid {
-    grid-template-columns: repeat(4, 22px);
-    gap: 4px;
-  }
-  
-  .color-swatch {
-    width: 22px;
-    height: 22px;
-    border-width: 1.5px;
-  }
-  
-  /* Shapes dropdown responsive */
-  .shapes-menu {
-    min-width: 110px;
-    max-width: calc(100vw - 20px);
-    padding: 4px;
-  }
-  
-  .shapes-menu button {
-    padding: 6px 7px;
-    font-size: 10px;
-    gap: 6px;
-  }
-  
-  .shapes-menu button svg {
-    width: 16px;
-    height: 16px;
-  }
-  
-  .wb-text-bar {
-    padding: 4px 6px;
-    gap: 3px;
-    max-width: 95vw;
-  }
-  
-  .wb-text-bar__font-btn {
-    min-width: 70px;
-    height: 24px;
-    font-size: 10px;
-    padding: 0 6px;
-  }
-  
-  .wb-text-bar__size {
-    gap: 1px;
-  }
-  
-  .wb-text-bar__size-btn {
-    width: 22px;
-    height: 22px;
-    font-size: 14px;
-  }
-  
-  .wb-text-bar__size-input {
-    width: 32px;
-    height: 22px;
-    font-size: 11px;
-  }
-  
-  .wb-text-bar__fmt-btn {
-    width: 24px;
-    height: 24px;
-    font-size: 12px;
-  }
-  
-  .wb-ctx-menu {
-    min-width: 160px;
-  }
-  
-  .wb-ctx-item {
-    padding: 6px 8px;
-    font-size: 11px;
-    gap: 8px;
-  }
-  
-  .wb-ctx-icon {
-    width: 12px;
-    height: 12px;
-  }
-}
-
-/* Additional responsive improvements for 360px - 480px range */
-@media (min-width: 321px) and (max-width: 480px) {
-  .color-palette {
-    max-width: calc(100vw - 32px);
-  }
-  
-  .palette-grid {
-    grid-template-columns: repeat(5, 24px);
-  }
-  
-  .shapes-menu {
-    max-width: calc(100vw - 32px);
-  }
-  
-  .shapes-menu button {
-    font-size: 11px;
-    padding: 7px 8px;
-  }
-}
-
-/* Improvements for 481px - 768px range */
-@media (min-width: 481px) and (max-width: 768px) {
-  .color-palette {
-    max-width: 200px;
-  }
-  
-  .shapes-menu {
-    max-width: 180px;
-  }
+  .tool-btn, .menu-btn { min-width: 40px; min-height: 40px; }
+  .color-swatch { width: 32px; height: 32px; }
+  .wb-ctx-item { padding: 10px 12px; font-size: 13px; }
 }

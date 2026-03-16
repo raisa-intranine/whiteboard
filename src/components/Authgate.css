@@ -376,7 +376,7 @@
   top: 0;
   left: 0;
   right: 0;
-  height: 65px;
+  height: 52px;
   background: var(--surface-pure);
   border-bottom: 1px solid var(--border);
   box-shadow: var(--shadow-sm);
@@ -397,16 +397,20 @@
   font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.3px;
+  flex-shrink: 0;
 }
 
 .ag-topbar-brand svg {
   color: var(--accent);
+  flex-shrink: 0;
 }
 
 .ag-topbar-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  flex-shrink: 0;
+  min-width: 0;
 }
 
 /* Avatar */
@@ -534,7 +538,7 @@
 
 
 .ag-app-wrap {
-  padding-top: 65px;
+  padding-top: 52px;
   height: 100vh;
   box-sizing: border-box;
   overflow: hidden;
@@ -585,11 +589,35 @@
 }
 
 
+/* Mobile (768px and below) */
+@media (max-width: 768px) {
+  .ag-topbar {
+    padding: 0 10px;
+    height: 48px;
+  }
+
+  .ag-app-wrap {
+    padding-top: 48px;
+  }
+
+  .ag-topbar-brand span {
+    display: none; /* hide "Whiteboard" text, keep icon */
+  }
+
+  .ag-topbar-right {
+    gap: 6px;
+  }
+}
+
 /* Extra small devices (320px and below) */
 @media (max-width: 320px) {
   .ag-topbar {
-    height: 56px;
+    height: 48px;
     padding: 0 8px;
+  }
+
+  .ag-app-wrap {
+    padding-top: 48px;
   }
 
   .ag-topbar-brand {

@@ -146,12 +146,13 @@ export default function AuthGate({ children, theme, boardId, currentSessionId, o
           </div>
 
           <div className="ag-topbar-right">
-            {boardId && currentSessionId && (
+            {boardId && (
               <SessionManager
                 boardId={boardId}
                 currentSessionId={currentSessionId}
                 onSessionChange={onSessionChange}
                 theme={theme}
+                currentUser={user}
               />
             )}
 

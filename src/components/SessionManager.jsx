@@ -16,7 +16,7 @@ import {
 import { sendSessionInvite } from '../services/email'
 import { auth } from '../services/firebase'
 
-export default function SessionManager({ boardId, currentSessionId, onSessionChange, theme }) {
+export default function SessionManager({ boardId, currentSessionId, onSessionChange, theme, currentUser }) {
   const [sessions, setSessions] = useState([])
   const [isOpen, setIsOpen] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
@@ -35,6 +35,9 @@ export default function SessionManager({ boardId, currentSessionId, onSessionCha
   const [showSuggestions, setShowSuggestions] = useState(false)
   const searchTimeoutRef = useRef(null)
   const shareDialogRef = useRef(null)
+  const triggerRef = useRef(null)
+  const dropdownRef = useRef(null)
+  const [dropdownPos, setDropdownPos] = useState({ top: 0, right: 0 })
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false)
   const [sessionToDelete, setSessionToDelete] = useState(null)
   const [removeCollabVisible, setRemoveCollabVisible] = useState(false)
@@ -48,6 +51,32 @@ export default function SessionManager({ boardId, currentSessionId, onSessionCha
   const hideToast = () => {
     setToast({ visible: false, message: '', type: 'info' })
   }
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!isOpen) return
+
+    const handleClickOutside = (e) => {
+      // Don't close while a confirm dialog is open
+      if (deleteConfirmVisible || removeCollabVisible) return
+      if (
+        dropdownRef.current && !dropdownRef.current.contains(e.target) &&
+        triggerRef.current && !triggerRef.current.contains(e.target)
+      ) {
+        setIsOpen(false)
+        setIsCreating(false)
+      }
+    }
+
+    const timer = setTimeout(() => {
+      document.addEventListener('mousedown', handleClickOutside)
+    }, 100)
+
+    return () => {
+      clearTimeout(timer)
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [isOpen, deleteConfirmVisible, removeCollabVisible])
 
   // Close share dialog when clicking outside
   useEffect(() => {
@@ -357,17 +386,46 @@ export default function SessionManager({ boardId, currentSessionId, onSessionCha
     <>
       <div className={`session-manager ${theme || ''}`}>
       <button 
+        ref={triggerRef}
         className="session-trigger" 
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => {
+          if (!isOpen && triggerRef.current) {
+            const rect = triggerRef.current.getBoundingClientRect()
+            const dropdownWidth = Math.min(320, window.innerWidth - 16)
+            const rightFromEdge = window.innerWidth - rect.right
+            // Clamp so dropdown doesn't go off left edge
+            const clampedRight = Math.min(rightFromEdge, window.innerWidth - dropdownWidth - 8)
+            setDropdownPos({
+              top: rect.bottom + 8,
+              right: Math.max(8, clampedRight),
+            })
+          }
+          setIsOpen(!isOpen)
+        }}
         title="Switch Canvas Session"
+        disabled={!currentSessionId && sessions.length === 0}
       >
-        <span className="session-icon">📋</span>
-        <span className="session-name">{currentSession?.name || 'Loading...'}</span>
-        <span className="session-arrow">{isOpen ? '▲' : '▼'}</span>
+        {(!currentSession && sessions.length === 0) ? (
+          <svg className="session-icon-svg session-icon-spinning" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+          </svg>
+        ) : (
+          <svg className="session-icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <line x1="3" y1="9" x2="21" y2="9"/>
+            <line x1="9" y1="21" x2="9" y2="9"/>
+          </svg>
+        )}
+        <span className={`session-name ${!currentSession ? 'session-name--loading' : ''}`}>
+          {currentSession?.name || (sessions.length > 0 ? sessions[0]?.name : 'Loading')}
+        </span>
+        <svg className="session-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points={isOpen ? "18 15 12 9 6 15" : "6 9 12 15 18 9"}/>
+        </svg>
       </button>
 
       {isOpen && (
-        <div className="session-dropdown">
+        <div className="session-dropdown" ref={dropdownRef} style={{ top: dropdownPos.top, right: dropdownPos.right, width: Math.min(320, window.innerWidth - 16) }}>
           <div className="session-header">
             <h3>Canvas Sessions</h3>
             <button 
@@ -382,6 +440,7 @@ export default function SessionManager({ boardId, currentSessionId, onSessionCha
             {sessions.map(session => {
               const isCurrentSession = session.id === currentSessionId
               const sessionCollabs = sessionCollaborators[session.id] || []
+              const isSessionOwner = session.creatorId === (currentUser?.id || auth.currentUser?.uid)
               
               return (
               <div key={session.id} className="session-item-wrapper">
@@ -393,7 +452,9 @@ export default function SessionManager({ boardId, currentSessionId, onSessionCha
                     <span className="session-item-name">
                       {session.name}
                       {switchingToSessionId === session.id && (
-                        <span className="session-loading-spinner">⏳</span>
+                        <svg className="session-loading-spinner" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                          <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                        </svg>
                       )}
                     </span>
                     {isCurrentSession && <span className="session-badge">Current</span>}
@@ -425,10 +486,11 @@ export default function SessionManager({ boardId, currentSessionId, onSessionCha
                           <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
                         </svg>
                       </button>
+                      {/* Members button — visible to everyone, owners get full manage UI */}
                       <button
                         className="session-action-button"
                         onClick={(e) => handleOpenShareDialog(session.id, e)}
-                        title="Share with user"
+                        title={isSessionOwner ? 'Share with user' : 'View members'}
                       >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <circle cx="18" cy="5" r="3" />
@@ -438,21 +500,25 @@ export default function SessionManager({ boardId, currentSessionId, onSessionCha
                           <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
                         </svg>
                       </button>
-                      <button
-                        className="session-action-button"
-                        onClick={(e) => handleTogglePrivacy(session.id, session.isPrivate, e)}
-                        title={session.isPrivate ? 'Make accessible to all board members' : 'Make private'}
-                      >
-                        {session.isPrivate ? '🔒' : '🔓'}
-                      </button>
-                      {session.id !== currentSessionId && sessions.length > 1 && (
-                        <button
-                          className="session-delete"
-                          onClick={(e) => handleDeleteSession(session.id, e)}
-                          title="Delete session"
-                        >
-                          🗑️
-                        </button>
+                      {isSessionOwner && (
+                        <>
+                          <button
+                            className="session-action-button"
+                            onClick={(e) => handleTogglePrivacy(session.id, session.isPrivate, e)}
+                            title={session.isPrivate ? 'Make accessible to all board members' : 'Make private'}
+                          >
+                            {session.isPrivate ? '🔒' : '🔓'}
+                          </button>
+                          {session.id !== currentSessionId && sessions.length > 1 && (
+                            <button
+                              className="session-delete"
+                              onClick={(e) => handleDeleteSession(session.id, e)}
+                              title="Delete session"
+                            >
+                              🗑️
+                            </button>
+                          )}
+                        </>
                       )}
                     </div>
                   </div>
@@ -469,85 +535,110 @@ export default function SessionManager({ boardId, currentSessionId, onSessionCha
                       }}>×</button>
                     </div>
                     
-                    <div className="share-input-group">
-                      <div className="share-input-wrapper">
-                        <input
-                          type="email"
-                          value={shareEmail}
-                          onChange={handleEmailInputChange}
-                          placeholder="Enter email address..."
-                          onKeyDown={(e) => {
-                            e.stopPropagation()
-                            if (e.key === 'Enter') {
-                              e.preventDefault()
-                              handleShareSession(session.id)
-                            }
-                            if (e.key === 'Escape') {
-                              e.preventDefault()
-                              setShowSuggestions(false)
-                              if (!shareEmail) {
-                                setShareDialogOpen(null)
-                              }
-                            }
-                            if (e.key === 'ArrowDown' && userSuggestions.length > 0) {
-                              e.preventDefault()
-                              setShowSuggestions(true)
-                            }
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                          autoFocus
-                        />
+                    {isSessionOwner ? (
+                      <>
+                        <div className="share-input-group">
+                          <div className="share-input-wrapper">
+                            <input
+                              type="email"
+                              value={shareEmail}
+                              onChange={handleEmailInputChange}
+                              placeholder="Enter email address..."
+                              onKeyDown={(e) => {
+                                e.stopPropagation()
+                                if (e.key === 'Enter') {
+                                  e.preventDefault()
+                                  handleShareSession(session.id)
+                                }
+                                if (e.key === 'Escape') {
+                                  e.preventDefault()
+                                  setShowSuggestions(false)
+                                  if (!shareEmail) {
+                                    setShareDialogOpen(null)
+                                  }
+                                }
+                                if (e.key === 'ArrowDown' && userSuggestions.length > 0) {
+                                  e.preventDefault()
+                                  setShowSuggestions(true)
+                                }
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                              autoFocus
+                            />
+                            
+                            {showSuggestions && userSuggestions.length > 0 && (
+                              <div className="user-suggestions">
+                                {userSuggestions.map(user => (
+                                  <div
+                                    key={user.id}
+                                    className="user-suggestion-item"
+                                    onClick={() => handleSelectUser(user)}
+                                  >
+                                    <div className="user-suggestion-info">
+                                      <span className="user-suggestion-name">{user.name}</span>
+                                      <span className="user-suggestion-email">{user.email}</span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          
+                          <button 
+                            onClick={() => handleShareSession(session.id)}
+                            disabled={sharingSessionId === session.id || !shareEmail.trim()}
+                            className={sharingSessionId === session.id ? 'loading' : ''}
+                          >
+                            {sharingSessionId === session.id ? 'Sending invite...' : 'Share'}
+                          </button>
+                        </div>
                         
-                        {showSuggestions && userSuggestions.length > 0 && (
-                          <div className="user-suggestions">
-                            {userSuggestions.map(user => (
-                              <div
-                                key={user.id}
-                                className="user-suggestion-item"
-                                onClick={() => handleSelectUser(user)}
-                              >
-                                <div className="user-suggestion-info">
-                                  <span className="user-suggestion-name">{user.name}</span>
-                                  <span className="user-suggestion-email">{user.email}</span>
+                        {loadingCollaborators ? (
+                          <div className="share-loading">Loading collaborators...</div>
+                        ) : collaborators.length > 0 ? (
+                          <div className="collaborators-list">
+                            <h5>Shared with:</h5>
+                            {collaborators.map(collab => (
+                              <div key={collab.id} className="collaborator-item">
+                                <div className="collaborator-info">
+                                  <span className="collaborator-name">{collab.name}</span>
+                                  <span className="collaborator-email">{collab.email}</span>
+                                </div>
+                                <button
+                                  className="remove-collaborator"
+                                  onClick={() => handleRemoveCollaborator(session.id, collab.id, collab.name)}
+                                  title="Remove access"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="share-empty">No collaborators yet</div>
+                        )}
+                      </>
+                    ) : (
+                      // Read-only view for non-owners
+                      <>
+                        {loadingCollaborators ? (
+                          <div className="share-loading">Loading...</div>
+                        ) : collaborators.length > 0 ? (
+                          <div className="collaborators-list">
+                            <h5>Members:</h5>
+                            {collaborators.map(collab => (
+                              <div key={collab.id} className="collaborator-item">
+                                <div className="collaborator-info">
+                                  <span className="collaborator-name">{collab.name}</span>
+                                  <span className="collaborator-email">{collab.email}</span>
                                 </div>
                               </div>
                             ))}
                           </div>
+                        ) : (
+                          <div className="share-empty">No other members</div>
                         )}
-                      </div>
-                      
-                      <button 
-                        onClick={() => handleShareSession(session.id)}
-                        disabled={sharingSessionId === session.id || !shareEmail.trim()}
-                        className={sharingSessionId === session.id ? 'loading' : ''}
-                      >
-                        {sharingSessionId === session.id ? 'Sending invite...' : 'Share'}
-                      </button>
-                    </div>
-                    
-                    {loadingCollaborators ? (
-                      <div className="share-loading">Loading collaborators...</div>
-                    ) : collaborators.length > 0 ? (
-                      <div className="collaborators-list">
-                        <h5>Shared with:</h5>
-                        {collaborators.map(collab => (
-                          <div key={collab.id} className="collaborator-item">
-                            <div className="collaborator-info">
-                              <span className="collaborator-name">{collab.name}</span>
-                              <span className="collaborator-email">{collab.email}</span>
-                            </div>
-                            <button
-                              className="remove-collaborator"
-                              onClick={() => handleRemoveCollaborator(session.id, collab.id, collab.name)}
-                              title="Remove access"
-                            >
-                              ×
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="share-empty">No collaborators yet</div>
+                      </>
                     )}
                   </div>
                 )}
