@@ -139,11 +139,11 @@ const getSerializedCanvas = (canvas) => {
   const json = canvas.toJSON(SERIALIZE_PROPS)
   
   if (json.objects) {
-    // Strip remote selection overlays and pattern fills
+    // Strip remote selection overlays
     json.objects = json.objects.filter(obj => !obj.isRemoteSelection)
+    // Strip pattern fills (can't be serialized)
     json.objects.forEach(obj => {
       if (obj.fill && typeof obj.fill === 'object' && obj.fill !== null) {
-        console.log('[getSerializedCanvas] Stripping pattern from object:', obj.type, 'fillPatternType:', obj.fillPatternType)
         obj.fill = 'transparent'
       }
     })
@@ -229,9 +229,21 @@ const mergeCanvasObjects = (canvas, newCanvasJson, isMutingRef, onDone) => {
     removedCount++
   })
   
+  // Build a set of object IDs currently inside an active selection (their left/top
+  // are selection-relative, not canvas-absolute — updating them would cause jumping)
+  const activeSelectionIds = new Set()
+  const activeObj = canvas.getActiveObject()
+  if (activeObj && activeObj.type === 'activeSelection') {
+    activeObj.getObjects().forEach(o => { if (o.id) activeSelectionIds.add(o.id) })
+  }
+
   // Add or update objects from new canvas
   newObjects.forEach(newObj => {
     if (newObj.id && currentMap[newObj.id]) {
+      // Skip objects currently inside an active selection — their coords are
+      // selection-relative and updating them would cause a position jump
+      if (activeSelectionIds.has(newObj.id)) return
+
       // Object exists - update it only if it looks different
       const existingObj = currentMap[newObj.id]
       const needsUpdate = (
@@ -368,14 +380,28 @@ const mergeCanvasObjects = (canvas, newCanvasJson, isMutingRef, onDone) => {
           }
           
           canvas.add(obj)
+          if (obj.type === 'line') {
+            normalizeLineOrigin(obj)
+            obj.set({ perPixelTargetFind: true, hasBorders: false })
+            applyLineControls(obj)
+          }
           addedCount++
+        })
+        // Re-apply z-order after async add to keep newly added objects in correct position
+        newObjects.forEach((nObj, targetIndex) => {
+          if (!nObj.id) return
+          const canvasObjs = canvas.getObjects()
+          const found = canvasObjs.find(o => o.id === nObj.id)
+          if (!found) return
+          const currentIndex = canvasObjs.indexOf(found)
+          if (currentIndex !== targetIndex) canvas.moveTo(found, targetIndex)
         })
         canvas.requestRenderAll()
       }, null)
     }
   })
   
-  // Restore z-order to match the incoming canvas
+  // Restore z-order for existing objects to match the incoming canvas
   newObjects.forEach((newObj, targetIndex) => {
     if (!newObj.id) return
     const existingObj = currentMap[newObj.id]
@@ -415,8 +441,30 @@ const loadJsonIntoCanvas = (canvas, parsed, isMutingRef, onDone) => {
   
   // Suppress onMutation firing during load
   if (isMutingRef) isMutingRef.current = true
+
+  // Capture the intended z-order from the JSON before async image loads scramble it
+  const intendedOrder = (parsed.objects || []).map(o => o.id).filter(Boolean)
+
+  // Helper to restore z-order by ID
+  const restoreZOrder = () => {
+    if (intendedOrder.length === 0) return
+    const idToObj = {}
+    canvas.getObjects().forEach(obj => { if (obj.id) idToObj[obj.id] = obj })
+    intendedOrder.forEach((id, targetIndex) => {
+      const obj = idToObj[id]
+      if (!obj) return
+      const currentIndex = canvas.getObjects().indexOf(obj)
+      if (currentIndex !== targetIndex) canvas.moveTo(obj, targetIndex)
+    })
+    canvas.requestRenderAll()
+  }
+
   canvas.loadFromJSON(parsed, () => {
     const objs = canvas.getObjects()
+
+    // Re-apply correct z-order immediately after loadFromJSON callback
+    restoreZOrder()
+
     // Rebuild sticky note references: identify sticky rects and texts by marker properties
     const textboxes = objs.filter(o => (o.type === 'textbox' || o.type === 'i-text') && o.isStickyText)
     const rects = objs.filter(o => o.type === 'rect' && o.isStickyNote)
@@ -505,7 +553,13 @@ const loadJsonIntoCanvas = (canvas, parsed, isMutingRef, onDone) => {
       }
       
       if (obj.type === 'line') {
-        obj.set({ perPixelTargetFind: true, hasBorders: false })
+        // Clean up any previously-saved highlight color (#1a73e8) — restore to black.
+        // This fixes lines that were accidentally saved while selected (old bug).
+        if (obj.stroke === '#1a73e8') {
+          obj.set({ stroke: '#000000' })
+        }
+        normalizeLineOrigin(obj)
+        obj.set({ perPixelTargetFind: true, hasBorders: false, borderColor: 'transparent' })
         applyLineControls(obj)
       }
       obj.setCoords()
@@ -519,20 +573,14 @@ const loadJsonIntoCanvas = (canvas, parsed, isMutingRef, onDone) => {
     }
     console.log('[loadJsonIntoCanvas] Loaded', objs.length, 'objects')
     
-    // Debug: Log first few objects to see their properties
-    if (objs.length > 0) {
-      console.log('[loadJsonIntoCanvas] Sample object:', {
-        type: objs[0].type,
-        left: objs[0].left,
-        top: objs[0].top,
-        visible: objs[0].visible,
-        opacity: objs[0].opacity,
-        stroke: objs[0].stroke,
-        fill: objs[0].fill
-      })
-    }
-    
     canvas.requestRenderAll()
+
+    // Re-apply z-order after a short delay to catch async image loads that fire after the callback
+    setTimeout(() => {
+      if (!canvas || !canvas.lowerCanvasEl) return
+      restoreZOrder()
+    }, 300)
+
     if (isMutingRef) isMutingRef.current = false
     onDone()
   }, (o, fabricObj) => { if (fabricObj) fabricObj.setCoords() })
@@ -553,6 +601,12 @@ const deserializeCanvas = (canvas, isMutingRef, sessionId, onDone) => {
   }
 
   if (!sessionId) {
+    // Try to get sessionId from URL as fallback
+    const urlSessionId = resolveSessionId()
+    if (urlSessionId) {
+      console.log('[deserializeCanvas] No sessionId prop, using URL sessionId:', urlSessionId)
+      return deserializeCanvas(canvas, isMutingRef, urlSessionId, onDone)
+    }
     console.warn('[deserializeCanvas] No sessionId found - cannot load')
     onDone()
     return
@@ -775,13 +829,35 @@ const TextFormatBar = ({ format, onChange, position }) => {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Normalize line origin to 'center' (fixes lines saved with old originX:'left') ──
+const normalizeLineOrigin = (obj) => {
+  if (obj.type !== 'line') return
+  if (obj.originX !== 'center' || obj.originY !== 'center') {
+    // Fabric saves x1/y1/x2/y2 as center-relative offsets; left/top is the old origin.
+    // With originX:'left', left=min(x1,x2) in canvas space. Midpoint = left + width/2.
+    obj.set({
+      originX: 'center', originY: 'center',
+      left: obj.left + (obj.width || 0) / 2,
+      top: obj.top + (obj.height || 0) / 2,
+    })
+  }
+}
+
 // ── Line endpoint controls ───────────────────────────────────────────────────
 const applyLineControls = (line) => {
+  // In Fabric.js, a Line's x1/y1/x2/y2 are stored relative to the line's
+  // own origin (left/top = midpoint when originX:'center'). So the absolute
+  // canvas position of endpoint p1 is (left + x1, top + y1).
   const linePositionHandler = (pointKey) => function (_dim, _finalMatrix, fabricObject) {
     const canvas = fabricObject.canvas
     if (!canvas) return new fabric.Point(0, 0)
-    const x = pointKey === 'p1' ? fabricObject.x1 : fabricObject.x2
-    const y = pointKey === 'p1' ? fabricObject.y1 : fabricObject.y2
+
+    // calcLinePoints() returns offsets from the midpoint (left/top) in unscaled coords.
+    // With originX:'center', left/top IS the midpoint, so left + offset = absolute endpoint.
+    const pts = fabricObject.calcLinePoints()
+    const x = (pointKey === 'p1' ? pts.x1 : pts.x2) + fabricObject.left
+    const y = (pointKey === 'p1' ? pts.y1 : pts.y2) + fabricObject.top
+
     return fabric.util.transformPoint({ x, y }, canvas.viewportTransform)
   }
 
@@ -789,15 +865,39 @@ const applyLineControls = (line) => {
     const fabricObject = transform.target
     const canvas = fabricObject.canvas
     if (!canvas) return false
+
+    // Screen → canvas coords
     const pt = fabric.util.transformPoint(
       { x, y },
       fabric.util.invertTransform(canvas.viewportTransform)
     )
-    if (pointKey === 'p1') {
-      fabricObject.set({ x1: pt.x, y1: pt.y })
-    } else {
-      fabricObject.set({ x2: pt.x, y2: pt.y })
-    }
+
+    // Get the current absolute positions of both endpoints
+    const pts = fabricObject.calcLinePoints()
+    const absX1 = fabricObject.left + pts.x1
+    const absY1 = fabricObject.top + pts.y1
+    const absX2 = fabricObject.left + pts.x2
+    const absY2 = fabricObject.top + pts.y2
+
+    // Update the dragged endpoint to the new position
+    const newX1 = pointKey === 'p1' ? pt.x : absX1
+    const newY1 = pointKey === 'p1' ? pt.y : absY1
+    const newX2 = pointKey === 'p2' ? pt.x : absX2
+    const newY2 = pointKey === 'p2' ? pt.y : absY2
+
+    // New midpoint
+    const newMidX = (newX1 + newX2) / 2
+    const newMidY = (newY1 + newY2) / 2
+
+    // Temporarily disable _setWidthHeight side-effects by setting directly
+    fabricObject.x1 = newX1 - newMidX
+    fabricObject.y1 = newY1 - newMidY
+    fabricObject.x2 = newX2 - newMidX
+    fabricObject.y2 = newY2 - newMidY
+    fabricObject.left = newMidX
+    fabricObject.top = newMidY
+    fabricObject.width = Math.abs(newX2 - newX1)
+    fabricObject.height = Math.abs(newY2 - newY1)
     fabricObject.setCoords()
     return true
   }
@@ -832,9 +932,15 @@ const applyLineControls = (line) => {
       cursorStyle: 'crosshair',
     }),
   }
-  line.set({ hasControls: true, hasBorders: false })
+  line.set({ hasControls: true, hasBorders: false, borderColor: 'transparent', padding: 6 })
+
+  // Completely suppress the selection bounding box for lines
+  line.drawBorders = function() { return this }
+  line._renderControls = function(ctx, styleOverride) {
+    const so = Object.assign({}, styleOverride || {}, { hasBorders: false, borderColor: 'transparent' })
+    fabric.Object.prototype._renderControls.call(this, ctx, so)
+  }
 }
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ── Detect whether a canvas background colour is dark ────────────────────────
 const isBgDark = (bg) => {
@@ -1481,6 +1587,7 @@ const Whiteboard = ({
           console.log('[applySnapshot] Adding object:', obj.id, 'created by:', obj.createdBy)
           obj.set({ selectable: true, evented: true })
           if (obj.type === 'line') {
+            normalizeLineOrigin(obj)
             obj.set({ perPixelTargetFind: true, hasBorders: false })
             applyLineControls(obj)
           }
@@ -1974,18 +2081,28 @@ const Whiteboard = ({
     const canvas = fabricRef.current
     if (!canvas) return
     fabric.Image.fromURL(dataUrl, (img) => {
-      const maxW = canvas.getWidth() * 0.6
-      const maxH = canvas.getHeight() * 0.6
+      // Use viewport-aware sizing: compute visible canvas area in canvas coords
+      const vpt = canvas.viewportTransform
+      const zoom = vpt ? vpt[0] : 1
+      const visW = canvas.getWidth() / zoom
+      const visH = canvas.getHeight() / zoom
+      // Cap to 40% of visible area, max 500px in canvas coords
+      const maxW = Math.min(visW * 0.4, 500)
+      const maxH = Math.min(visH * 0.4, 500)
       const scale = Math.min(maxW / img.width, maxH / img.height, 1)
+      // Center in visible viewport (account for pan offset)
+      const vpOffX = vpt ? vpt[4] : 0
+      const vpOffY = vpt ? vpt[5] : 0
+      const centerX = (canvas.getWidth() / 2 - vpOffX) / zoom
+      const centerY = (canvas.getHeight() / 2 - vpOffY) / zoom
       img.set({
-        left: (canvas.getWidth() - img.width * scale) / 2,
-        top: (canvas.getHeight() - img.height * scale) / 2,
+        left: centerX - (img.width * scale) / 2,
+        top: centerY - (img.height * scale) / 2,
         scaleX: scale, scaleY: scale,
         selectable: true, evented: true,
         shadow: new fabric.Shadow({ color: 'rgba(0,0,0,.12)', blur: 12, offsetX: 0, offsetY: 3 }),
       })
       canvas.add(img)
-      canvas.bringToFront(img)
       canvas.setActiveObject(img)
       canvas.renderAll()
       setTool('select')
@@ -2058,6 +2175,20 @@ const Whiteboard = ({
     }
   }, [undo, redo, clearCanvas, addImage, deleteSelected, reloadSession])
 
+  // Auto-load session when currentSessionId becomes available after initial mount
+  // This handles the case where the canvas initializes before the session ID is resolved
+  useEffect(() => {
+    if (!currentSessionId) return
+    const canvas = fabricRef.current
+    if (!canvas || !canvas.lowerCanvasEl) return
+    // If canvas was loaded without a session (isLoadedRef is true but the initial
+    // deserializeCanvas was called with null sessionId), reload now that we have a session ID
+    if (isLoadedRef.current && !isLoadedRef.sessionId) {
+      console.log('[Whiteboard] Session became available after mount, loading canvas:', currentSessionId)
+      reloadSession(currentSessionId)
+    }
+  }, [currentSessionId, reloadSession])
+
   useEffect(() => {
     const container = containerRef.current
     // Reset history on mount (handles React StrictMode double-mount)
@@ -2116,8 +2247,12 @@ const Whiteboard = ({
     }
 
     // ── Load board data from backend ──────────────────────────────────────
+    // Initial load uses currentSessionId - if null, the session useEffect below will trigger a reload
     deserializeCanvas(canvas, isMutingRef, currentSessionId, (result) => {
       isLoadedRef.current = true
+      // Track which sessionId was used for the initial load.
+      // Use URL as fallback (same logic as deserializeCanvas).
+      isLoadedRef.sessionId = currentSessionId || resolveSessionId()
       
       console.log('[Whiteboard] Canvas loaded. Dimensions:', canvas.getWidth(), 'x', canvas.getHeight(), 'Objects:', canvas.getObjects().length)
       
@@ -2391,18 +2526,16 @@ const Whiteboard = ({
     const LINE_SELECT_COLOR = '#1a73e8'
 
     const highlightLines = (selected = []) => {
+      // Restore all previously highlighted lines
       canvas.getObjects().forEach(obj => {
         if (obj.type === 'line' && obj.__origStroke !== undefined) {
           obj.set('stroke', obj.__origStroke)
           delete obj.__origStroke
         }
       })
-      selected.forEach(obj => {
-        if (obj.type === 'line') {
-          obj.__origStroke = obj.stroke
-          obj.set('stroke', LINE_SELECT_COLOR)
-        }
-      })
+      // Do NOT change the stroke color for selection highlight.
+      // Instead, rely on the endpoint handles (applyLineControls) to show selection.
+      // This prevents the blue stroke from being saved on refresh.
       canvas.renderAll()
     }
 
@@ -2431,8 +2564,11 @@ const Whiteboard = ({
       syncTextBar(o)
       updateTextBarPos(o)
       highlightLines(e.selected || [])
-      // Publish selection to other users
-      if (user && o?.id) publishSelection(o.id)
+      // Publish all selected IDs to other users
+      if (user) {
+        const ids = (e.selected || []).map(obj => obj.id).filter(Boolean)
+        publishSelection(ids.length === 1 ? ids[0] : ids.length > 1 ? ids : null)
+      }
     })
     canvas.on('selection:updated', (e) => {
       const o = e.selected?.[0]
@@ -2440,8 +2576,14 @@ const Whiteboard = ({
       syncTextBar(o)
       updateTextBarPos(o)
       highlightLines(e.selected || [])
-      // Publish selection to other users
-      if (user && o?.id) publishSelection(o.id)
+      // Publish all selected IDs to other users
+      if (user) {
+        const allSelected = canvas.getActiveObject()?.type === 'activeSelection'
+          ? canvas.getActiveObject().getObjects()
+          : (e.selected || [])
+        const ids = allSelected.map(obj => obj.id).filter(Boolean)
+        publishSelection(ids.length === 1 ? ids[0] : ids.length > 1 ? ids : null)
+      }
     })
     canvas.on('selection:cleared', () => {
       setSelectedObject(null)
@@ -3108,6 +3250,7 @@ const Whiteboard = ({
             strokeLineCap: 'round', objectCaching: true, padding: 10,
             perPixelTargetFind: true, hasBorders: false, hasControls: false,
             lockScalingX: true, lockScalingY: true, lockRotation: true,
+            originX: 'center', originY: 'center',
           })
           break
         case 'rectangle':
@@ -3340,16 +3483,6 @@ const Whiteboard = ({
             selectable: true, evented: true, objectCaching: true,
             perPixelTargetFind: true, hasBorders: false,
             lockScalingX: true, lockScalingY: true, lockRotation: true,
-          })
-          obj._originalX1 = obj.x1; obj._originalY1 = obj.y1
-          obj._originalX2 = obj.x2; obj._originalY2 = obj.y2
-          obj._lastLeft = obj.left; obj._lastTop = obj.top
-          obj.on('moving', function () {
-            const dx = this.left - (this._lastLeft || this.left)
-            const dy = this.top - (this._lastTop || this.top)
-            this.set({ x1: this.x1 + dx, y1: this.y1 + dy, x2: this.x2 + dx, y2: this.y2 + dy })
-            this._lastLeft = this.left; this._lastTop = this.top
-            this.setCoords()
           })
           applyLineControls(obj)
           obj.setCoords()

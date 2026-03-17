@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { cloneElement } from 'react'
 import { signInWithGoogle, signOut, onAuthChange } from '../services/auth'
-import { createBoard, getUserBoards, createSession } from '../services/firestore'
+import { createBoard, getUserBoards, createSession, getSessions } from '../services/firestore'
 import SessionManager from './SessionManager'
 import './Authgate.css'
 
@@ -65,6 +65,18 @@ export default function AuthGate({ children, theme, boardId, currentSessionId, o
               // Use existing board
               const board = boards[0]
               params.set('board', board.id)
+
+              // Also load the first session so SessionManager doesn't need a refresh
+              try {
+                const sessions = await getSessions(board.id)
+                if (sessions.length > 0) {
+                  params.set('session', sessions[0].id)
+                  if (onSessionChange) onSessionChange(sessions[0])
+                }
+              } catch (err) {
+                console.warn('[AuthGate] Failed to load sessions for board:', err)
+              }
+
               window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`)
             }
           } catch (err) {

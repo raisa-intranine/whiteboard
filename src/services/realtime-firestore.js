@@ -394,12 +394,13 @@ export const setViewportSyncEnabled = (enabled) => {
 }
 
 /**
- * Publish selected object ID to presence (so other users can see what you've selected)
+ * Publish selected object ID(s) to presence (so other users can see what you've selected)
  */
 export const publishSelection = async (selectedObjectId) => {
   if (!currentBoardId || !currentSessionId || !auth.currentUser) return
   try {
     const presenceRef = doc(db, 'boards', currentBoardId, 'sessions', currentSessionId, 'presence', auth.currentUser.uid)
+    // selectedObjectId can be a string (single), array (multi), or null
     await setDoc(presenceRef, {
       selectedObjectId: selectedObjectId || null,
       lastSeen: serverTimestamp()

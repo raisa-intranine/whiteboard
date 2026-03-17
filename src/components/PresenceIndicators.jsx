@@ -47,17 +47,27 @@ const PresenceIndicators = ({ containerRef, fabricRef }) => {
 
     Object.entries(selections).forEach(([, sel]) => {
       if (!sel.objectId) return
-      const target = canvas.getObjects().find(o => o.id === sel.objectId)
-      if (!target) return
+      // objectId can be a string (single) or array (multi-selection)
+      const ids = Array.isArray(sel.objectId) ? sel.objectId : [sel.objectId]
+      const targets = canvas.getObjects().filter(o => o.id && ids.includes(o.id))
+      if (targets.length === 0) return
 
       const [color] = getAvatarColor(sel.email)
 
-      // Get bounding rect in canvas coordinates, then apply viewport transform
-      const br = target.getBoundingRect(true, true)
-      const x = br.left * vpt[0] + vpt[4]
-      const y = br.top * vpt[3] + vpt[5]
-      const w = br.width * vpt[0]
-      const h = br.height * vpt[3]
+      // Compute combined bounding rect for all selected objects
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+      targets.forEach(target => {
+        const br = target.getBoundingRect(true, true)
+        minX = Math.min(minX, br.left)
+        minY = Math.min(minY, br.top)
+        maxX = Math.max(maxX, br.left + br.width)
+        maxY = Math.max(maxY, br.top + br.height)
+      })
+
+      const x = minX * vpt[0] + vpt[4]
+      const y = minY * vpt[3] + vpt[5]
+      const w = (maxX - minX) * vpt[0]
+      const h = (maxY - minY) * vpt[3]
 
       // Dashed selection border
       ctx.save()
