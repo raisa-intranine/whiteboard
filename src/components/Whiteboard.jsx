@@ -21,7 +21,7 @@ const getClientId = () => realtimeService.getClientId()
 const publishFullCanvas = (data) => realtimeService.publishFullCanvas(data)
 const publishClear = (data) => realtimeService.publishClear(data)
 const enterPresence = (userData) => realtimeService.enterPresence(userData)
-const updatePresence = (userData) => realtimeService.updatePresence(userData)
+const updatePresence = (userData) => realtimeService.updatePresenceIfChanged(userData)
 const onPresenceChange = (callback) => realtimeService.onPresenceChange(callback)
 const getPresenceMembers = () => realtimeService.getPresenceMembers()
 const isRealtimeConnected = () => realtimeService.isRealtimeConnected()
@@ -1015,6 +1015,8 @@ const Whiteboard = ({
   const currentSessionIdRef = useRef(currentSessionId)
   // Timeout ref for editing indicator
   const editingTimeoutRef = useRef(null)
+  // Track last presence state to avoid redundant updates
+  const lastPresenceStateRef = useRef({ isEditing: false })
 
   const historyRef = useRef([])
   const historyIdxRef = useRef(-1)
@@ -1024,6 +1026,24 @@ const Whiteboard = ({
   useEffect(() => {
     currentSessionIdRef.current = currentSessionId
   }, [currentSessionId])
+
+  // Helper function to update presence only when state actually changes
+  const updatePresenceIfChanged = useCallback((newState) => {
+    const lastState = lastPresenceStateRef.current
+    
+    // Only update if isEditing state has changed
+    if (lastState.isEditing !== newState.isEditing) {
+      console.log('[Whiteboard] Presence state changed:', lastState.isEditing, '→', newState.isEditing)
+      lastPresenceStateRef.current = newState
+      updatePresenceIfChanged({
+        name: newState.name,
+        email: newState.email,
+        isEditing: newState.isEditing
+      })
+    } else {
+      console.log('[Whiteboard] Presence state unchanged, skipping update')
+    }
+  }, [])
 
   const [selectedObject, setSelectedObject] = useState(null)
   const [contextMenu, setContextMenu] = useState(null)
@@ -1272,6 +1292,12 @@ const Whiteboard = ({
             return
           }
           
+          // Skip if user is actively editing text to prevent text from disappearing
+          if (isEditingTextRef.current) {
+            console.log('[Whiteboard] Ignoring canvas:full - user is editing text')
+            return
+          }
+          
           const bgToApply = msg.background
           realtimeIgnoreRef.current = true
           mergeCanvasObjects(currentCanvas, msg.canvasJson, isMutingRef, () => {
@@ -1318,12 +1344,12 @@ const Whiteboard = ({
       // Heartbeat: keep lastSeen fresh so viewers don't get filtered out as stale
       const heartbeatInterval = setInterval(() => {
         if (!isActive) return
-        updatePresence({
+        updatePresenceIfChanged({
           name: user.name,
           email: user.email,
           isEditing: false
         })
-      }, 30000) // every 30 seconds
+      }, 60000) // every 60 seconds (optimized to reduce Firestore writes)
       window._presenceHeartbeat = heartbeatInterval
       
       // Subscribe to viewport sync
@@ -2425,7 +2451,7 @@ const Whiteboard = ({
       
       // Update presence to show user is editing
       if (user) {
-        updatePresence({
+        updatePresenceIfChanged({
           name: user.name,
           email: user.email,
           isEditing: true
@@ -2439,7 +2465,7 @@ const Whiteboard = ({
         // Set isEditing to false after 2 seconds of inactivity
         editingTimeoutRef.current = setTimeout(() => {
           if (user) {
-            updatePresence({
+            updatePresenceIfChanged({
               name: user.name,
               email: user.email,
               isEditing: false
@@ -2498,7 +2524,7 @@ const Whiteboard = ({
         editingTimeoutRef.current = setTimeout(() => {
           if (user) {
             console.log('[Whiteboard] Timeout expired - Setting isEditing to FALSE')
-            updatePresence({
+            updatePresenceIfChanged({
               name: user.name,
               email: user.email,
               isEditing: false
@@ -2541,7 +2567,7 @@ const Whiteboard = ({
 
     const updateTextBarPos = (obj) => {
       if (!obj || (obj.type !== 'i-text' && obj.type !== 'textbox') || typeof obj.getBoundingRect !== 'function') {
-        setTextBarPosition(null)
+        setTextBarPosition(prev => prev === null ? null : null)
         return
       }
       
@@ -2549,14 +2575,34 @@ const Whiteboard = ({
       const canvasRect = canvasEl
         ? canvasEl.getBoundingClientRect()
         : container.getBoundingClientRect()
-      const br = obj.getBoundingRect(true, true)
-      setTextBarPosition({
-        left: canvasRect.left + br.left,
-        top: canvasRect.top + br.top,
-        width: br.width,
-        height: br.height,
+      const br = obj.getBoundingRect()
+      
+      setTextBarPosition(prev => {
+        const left = canvasRect.left + br.left
+        const top = canvasRect.top + br.top
+        if (prev && prev.left === left && prev.top === top && prev.width === br.width && prev.height === br.height) {
+          return prev
+        }
+        return {
+          left,
+          top,
+          width: br.width,
+          height: br.height,
+        }
       })
     }
+
+    // Continuously sync text format bar position to ensure it stays locked to text 
+    // during zoom, pan, external updates (shared sessions), or animations.
+    canvas.on('after:render', () => {
+      const activeObj = canvas.getActiveObject()
+      if (activeObj && (activeObj.type === 'i-text' || activeObj.type === 'textbox')) {
+        updateTextBarPos(activeObj)
+      } else if (activeObj && activeObj.stickyText) {
+        updateTextBarPos(activeObj.stickyText)
+      }
+    })
+
 
     canvas.on('selection:created', (e) => {
       const o = e.selected?.[0]
@@ -2602,7 +2648,7 @@ const Whiteboard = ({
       
       // Update presence to show user is editing
       if (user) {
-        updatePresence({
+        updatePresenceIfChanged({
           name: user.name,
           email: user.email,
           isEditing: true
@@ -2625,7 +2671,7 @@ const Whiteboard = ({
         editingTimeoutRef.current = setTimeout(() => {
           if (user) {
             console.log('[Whiteboard] Text editing timeout - Setting isEditing to FALSE')
-            updatePresence({
+            updatePresenceIfChanged({
               name: user.name,
               email: user.email,
               isEditing: false
@@ -2642,7 +2688,7 @@ const Whiteboard = ({
       // Update presence to show user is editing
       if (user && !isEditingTextRef.current) {
         console.log('[Whiteboard] object:moving - Setting isEditing to TRUE')
-        updatePresence({
+        updatePresenceIfChanged({
           name: user.name,
           email: user.email,
           isEditing: true
@@ -2656,7 +2702,7 @@ const Whiteboard = ({
         // Set isEditing to false after 2 seconds of inactivity
         editingTimeoutRef.current = setTimeout(() => {
           if (user) {
-            updatePresence({
+            updatePresenceIfChanged({
               name: user.name,
               email: user.email,
               isEditing: false
@@ -2673,7 +2719,7 @@ const Whiteboard = ({
           const canvasRect = canvasEl
             ? canvasEl.getBoundingClientRect()
             : container.getBoundingClientRect()
-          const br = obj.getBoundingRect(true, true)
+          const br = obj.getBoundingRect()
           setTextBarPosition({
             left: canvasRect.left + br.left,
             top: canvasRect.top + br.top,
@@ -2688,7 +2734,7 @@ const Whiteboard = ({
           const canvasRect = canvasEl
             ? canvasEl.getBoundingClientRect()
             : container.getBoundingClientRect()
-          const br = obj.stickyText.getBoundingRect(true, true)
+          const br = obj.stickyText.getBoundingRect()
           setTextBarPosition({
             left: canvasRect.left + br.left,
             top: canvasRect.top + br.top,
@@ -2705,7 +2751,7 @@ const Whiteboard = ({
       // Update presence to show user is editing
       if (user && !isEditingTextRef.current) {
         console.log('[Whiteboard] object:scaling - Setting isEditing to TRUE')
-        updatePresence({
+        updatePresenceIfChanged({
           name: user.name,
           email: user.email,
           isEditing: true
@@ -2719,7 +2765,7 @@ const Whiteboard = ({
         // Set isEditing to false after 2 seconds of inactivity
         editingTimeoutRef.current = setTimeout(() => {
           if (user) {
-            updatePresence({
+            updatePresenceIfChanged({
               name: user.name,
               email: user.email,
               isEditing: false
@@ -2740,7 +2786,7 @@ const Whiteboard = ({
       // Update presence to show user is editing
       if (user && !isEditingTextRef.current) {
         console.log('[Whiteboard] object:rotating - Setting isEditing to TRUE')
-        updatePresence({
+        updatePresenceIfChanged({
           name: user.name,
           email: user.email,
           isEditing: true
@@ -2754,7 +2800,7 @@ const Whiteboard = ({
         // Set isEditing to false after 2 seconds of inactivity
         editingTimeoutRef.current = setTimeout(() => {
           if (user) {
-            updatePresence({
+            updatePresenceIfChanged({
               name: user.name,
               email: user.email,
               isEditing: false
@@ -3184,7 +3230,7 @@ const Whiteboard = ({
       // Update presence to show user is editing
       if (user && currentTool !== 'select') {
         console.log('[Whiteboard] onMouseDown - Setting isEditing to TRUE for tool:', currentTool)
-        updatePresence({
+        updatePresenceIfChanged({
           name: user.name,
           email: user.email,
           isEditing: true
@@ -3198,7 +3244,7 @@ const Whiteboard = ({
         // Set isEditing to false after 2 seconds of inactivity
         editingTimeoutRef.current = setTimeout(() => {
           if (user) {
-            updatePresence({
+            updatePresenceIfChanged({
               name: user.name,
               email: user.email,
               isEditing: false
@@ -3310,7 +3356,7 @@ const Whiteboard = ({
               const canvasEl = canvas.upperCanvasEl || canvas.lowerCanvasEl
               if (canvasEl) {
                 const canvasRect = canvasEl.getBoundingClientRect()
-                const br = textObj.getBoundingRect(true, true)
+                const br = textObj.getBoundingRect()
                 setTextBarPosition({
                   left: canvasRect.left + br.left,
                   top: canvasRect.top + br.top,
@@ -3331,7 +3377,7 @@ const Whiteboard = ({
           const canvasEl2 = canvas.upperCanvasEl || canvas.lowerCanvasEl
           if (canvasEl2) {
             const canvasRect2 = canvasEl2.getBoundingClientRect()
-            const br = t.getBoundingRect(true, true)
+            const br = t.getBoundingRect()
             setTextBarPosition({ left: canvasRect2.left + br.left, top: canvasRect2.top + br.top, width: br.width, height: br.height })
           }
           setShowTextBar(true)
@@ -3392,7 +3438,7 @@ const Whiteboard = ({
               const canvasEl = canvas.upperCanvasEl || canvas.lowerCanvasEl
               if (canvasEl) {
                 const canvasRect = canvasEl.getBoundingClientRect()
-                const br = textObj.getBoundingRect(true, true)
+                const br = textObj.getBoundingRect()
                 setTextBarPosition({
                   left: canvasRect.left + br.left,
                   top: canvasRect.top + br.top,
@@ -3551,7 +3597,7 @@ const Whiteboard = ({
     const canvasEl = fabricRef.current?.upperCanvasEl || fabricRef.current?.lowerCanvasEl
     if (canvasEl) {
       const canvasRect = canvasEl.getBoundingClientRect()
-      const br = obj.getBoundingRect(true, true)
+      const br = obj.getBoundingRect()
       setTextBarPosition({ left: canvasRect.left + br.left, top: canvasRect.top + br.top, width: br.width, height: br.height })
     }
     setTextFormat(next)

@@ -289,6 +289,16 @@
   transition: transform 0.2s ease;
 }
 
+.mermaid-preview-content.gantt-preview {
+  padding: 10px;
+}
+
+.mermaid-preview-content.gantt-preview > div {
+  width: 100%;
+  max-width: none;
+  transform-origin: top left;
+}
+
 .mermaid-modal.dark .mermaid-preview-content {
   background: #2a2d2e;
 }

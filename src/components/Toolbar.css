@@ -346,12 +346,11 @@
 
 /* ── Responsive ───────────────────────────────────────── */
 
-/* 1200px: collapse right-side pill buttons to icon-only, hide diagram, shrink slider */
+/* 1200px: collapse right-side pill buttons to icon-only, shrink slider */
 @media (max-width: 1200px) {
   .laser-label, .export-label, .frame-label { display: none; }
   .export-btn, .laser-btn, .frame-btn { width: 34px; padding: 0; justify-content: center; border-radius: var(--tb-radius-md); }
   .toolbar-section { padding: 0 4px; }
-  .tool-btn[data-tooltip="Diagram"] { display: none; }
   .stroke-width-control input[type="range"] { width: 40px; }
 }
 

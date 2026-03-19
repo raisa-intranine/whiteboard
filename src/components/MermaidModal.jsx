@@ -9,6 +9,11 @@ mermaid.initialize({
   theme: 'default',
   securityLevel: 'loose',
   fontFamily: 'DM Sans, sans-serif',
+  themeVariables: {
+    xyChart: {
+      plotColorPalette: '#1a73e8, #ea4335, #34a853, #fbbc05, #9c27b0',
+    }
+  }
 })
 
 const MERMAID_EXAMPLES = {
@@ -304,7 +309,38 @@ const MermaidModal = ({ visible, onClose, canvas, theme, mode = 'generate' }) =>
       setError('')
       const id = `mermaid-${Date.now()}`
       const { svg } = await mermaid.render(id, mermaidCode)
-      setSvgContent(svg)
+      
+      // Check if this is a Gantt chart and adjust SVG dimensions
+      const isGantt = mermaidCode.trim().toLowerCase().startsWith('gantt')
+      if (isGantt) {
+        // Parse and modify SVG to make Gantt charts fill the preview area
+        const parser = new DOMParser()
+        const svgDoc = parser.parseFromString(svg, 'image/svg+xml')
+        const svgEl = svgDoc.documentElement
+        
+        // Remove fixed width/height to make it responsive
+        svgEl.removeAttribute('width')
+        svgEl.removeAttribute('height')
+        
+        // Set width to 100% and preserve aspect ratio
+        svgEl.setAttribute('width', '100%')
+        svgEl.setAttribute('height', 'auto')
+        
+        // Ensure viewBox exists for proper scaling
+        if (!svgEl.getAttribute('viewBox')) {
+          const bbox = svgEl.getBBox?.() || { x: 0, y: 0, width: 800, height: 600 }
+          svgEl.setAttribute('viewBox', `${bbox.x} ${bbox.y} ${bbox.width} ${bbox.height}`)
+        }
+        
+        // Add preserveAspectRatio to ensure proper scaling
+        svgEl.setAttribute('preserveAspectRatio', 'xMinYMin meet')
+        
+        const serializer = new XMLSerializer()
+        const modifiedSvg = serializer.serializeToString(svgDoc)
+        setSvgContent(modifiedSvg)
+      } else {
+        setSvgContent(svg)
+      }
     } catch (err) {
       console.error('Mermaid render error:', err)
       setError('Invalid Mermaid syntax. Please check your code.')
@@ -642,7 +678,7 @@ const MermaidModal = ({ visible, onClose, canvas, theme, mode = 'generate' }) =>
                   </button>
                 </div>
               </div>
-              <div className="mermaid-preview-content">
+              <div className={`mermaid-preview-content ${mermaidCode.trim().toLowerCase().startsWith('gantt') ? 'gantt-preview' : ''}`}>
                 {generating && <div className="mermaid-loading">Generating...</div>}
                 {error && <div className="mermaid-error">{error}</div>}
                 {!generating && !error && !svgContent && (
