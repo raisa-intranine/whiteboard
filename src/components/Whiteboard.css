@@ -92,6 +92,17 @@ body {
   left: 0;
 }
 
+/* Text selection styling for Fabric.js canvas */
+.canvas-container ::selection {
+  background: rgba(26, 115, 232, 0.3);
+  color: inherit;
+}
+
+.canvas-container ::-moz-selection {
+  background: rgba(26, 115, 232, 0.3);
+  color: inherit;
+}
+
 
 
 
