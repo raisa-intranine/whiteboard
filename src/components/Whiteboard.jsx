@@ -48,6 +48,8 @@ const SERIALIZE_PROPS = [
   'textAlign', 'lineHeight', 'charSpacing', // Text layout
   'fillPatternType', // Custom property to track pattern type (hatch, cross, dots)
   'fillPatternColor', // Color used for the pattern
+  'animation', // Animation type (fade, slide, bounce, rotate, pulse, none)
+  'animationDuration', // Animation duration in milliseconds
 ]
 
 // Debounce helper for throttling backend saves
@@ -66,9 +68,9 @@ const throttle = (fn, ms) => {
   return (...args) => {
     const now = Date.now()
     const timeSinceLastCall = now - lastCall
-    
+
     clearTimeout(timer)
-    
+
     if (timeSinceLastCall >= ms) {
       lastCall = now
       fn(...args)
@@ -137,7 +139,7 @@ const saveToSessionImmediate = async (boardId, sessionId, canvasJson, background
 // Helper: Serialize canvas JSON and strip pattern objects to prevent serialization errors
 const getSerializedCanvas = (canvas) => {
   const json = canvas.toJSON(SERIALIZE_PROPS)
-  
+
   if (json.objects) {
     // Strip remote selection overlays
     json.objects = json.objects.filter(obj => !obj.isRemoteSelection)
@@ -148,14 +150,14 @@ const getSerializedCanvas = (canvas) => {
       }
     })
   }
-  
+
   return json
 }
 
 const serializeCanvas = (canvas, sessionIdRef) => {
   try {
     const json = getSerializedCanvas(canvas)
-    
+
     const boardId = resolveBoardId()
     const sessionId = sessionIdRef.current
 
@@ -176,9 +178,9 @@ const mergeCanvasObjects = (canvas, newCanvasJson, isMutingRef, onDone) => {
     if (onDone) onDone()
     return
   }
-  
+
   if (isMutingRef) isMutingRef.current = true
-  
+
   // Pre-process: Remove any pattern objects from incoming JSON
   if (newCanvasJson.objects) {
     newCanvasJson.objects.forEach(obj => {
@@ -188,10 +190,10 @@ const mergeCanvasObjects = (canvas, newCanvasJson, isMutingRef, onDone) => {
       }
     })
   }
-  
+
   const currentObjects = canvas.getObjects()
   const newObjects = newCanvasJson.objects || []
-  
+
   // Build a map of current objects by ID
   const currentMap = {}
   currentObjects.forEach(obj => {
@@ -199,7 +201,7 @@ const mergeCanvasObjects = (canvas, newCanvasJson, isMutingRef, onDone) => {
       currentMap[obj.id] = obj
     }
   })
-  
+
   // Build a map of new objects by ID
   const newMap = {}
   newObjects.forEach(obj => {
@@ -207,11 +209,11 @@ const mergeCanvasObjects = (canvas, newCanvasJson, isMutingRef, onDone) => {
       newMap[obj.id] = obj
     }
   })
-  
+
   let addedCount = 0
   let updatedCount = 0
   let removedCount = 0
-  
+
   // Remove objects that are in current canvas but NOT in new canvas
   // This handles undo/delete operations from other users
   const objectsToRemove = []
@@ -220,7 +222,7 @@ const mergeCanvasObjects = (canvas, newCanvasJson, isMutingRef, onDone) => {
       objectsToRemove.push(obj)
     }
   })
-  
+
   objectsToRemove.forEach(obj => {
     console.log('[mergeCanvasObjects] Removing object:', obj.id, 'created by:', obj.createdBy)
     if (obj.stickyText) canvas.remove(obj.stickyText)
@@ -228,7 +230,7 @@ const mergeCanvasObjects = (canvas, newCanvasJson, isMutingRef, onDone) => {
     canvas.remove(obj)
     removedCount++
   })
-  
+
   // Build a set of object IDs currently inside an active selection (their left/top
   // are selection-relative, not canvas-absolute — updating them would cause jumping)
   const activeSelectionIds = new Set()
@@ -256,7 +258,7 @@ const mergeCanvasObjects = (canvas, newCanvasJson, isMutingRef, onDone) => {
         existingObj.stroke !== newObj.stroke ||
         existingObj.text !== newObj.text // Check text content changes
       )
-      
+
       if (needsUpdate) {
         // Recreate pattern if needed
         let fillToApply = newObj.fill
@@ -266,7 +268,7 @@ const mergeCanvasObjects = (canvas, newCanvasJson, isMutingRef, onDone) => {
             patternCanvas.width = 10
             patternCanvas.height = 10
             const ctx = patternCanvas.getContext('2d')
-            
+
             if (!ctx) {
               console.error('[mergeCanvasObjects] Failed to get 2d context for pattern')
               fillToApply = 'transparent'
@@ -305,7 +307,7 @@ const mergeCanvasObjects = (canvas, newCanvasJson, isMutingRef, onDone) => {
             fillToApply = 'transparent'
           }
         }
-        
+
         existingObj.set({
           left: newObj.left,
           top: newObj.top,
@@ -329,7 +331,7 @@ const mergeCanvasObjects = (canvas, newCanvasJson, isMutingRef, onDone) => {
       }
     } else {
       // New object - add it
-      fabric.util.enlivenObjects([newObj], function(enlivenedObjects) {
+      fabric.util.enlivenObjects([newObj], function (enlivenedObjects) {
         enlivenedObjects.forEach(obj => {
           // Recreate fill patterns if fillPatternType is set
           if (obj.fillPatternType && obj.fillPatternType !== 'solid') {
@@ -338,7 +340,7 @@ const mergeCanvasObjects = (canvas, newCanvasJson, isMutingRef, onDone) => {
               patternCanvas.width = 10
               patternCanvas.height = 10
               const ctx = patternCanvas.getContext('2d')
-              
+
               if (!ctx) {
                 console.error('[mergeCanvasObjects] Failed to get 2d context for pattern')
                 obj.set({ fill: 'transparent' })
@@ -378,11 +380,18 @@ const mergeCanvasObjects = (canvas, newCanvasJson, isMutingRef, onDone) => {
               obj.set({ fill: 'transparent' })
             }
           }
-          
+
           canvas.add(obj)
           if (obj.type === 'line') {
             normalizeLineOrigin(obj)
-            obj.set({ perPixelTargetFind: true, hasBorders: false })
+            obj.set({
+              perPixelTargetFind: true,
+              hasBorders: false,
+              objectCaching: false,
+              lockScalingX: true,
+              lockScalingY: true,
+              lockRotation: true
+            })
             applyLineControls(obj)
           }
           addedCount++
@@ -400,7 +409,7 @@ const mergeCanvasObjects = (canvas, newCanvasJson, isMutingRef, onDone) => {
       }, null)
     }
   })
-  
+
   // Restore z-order for existing objects to match the incoming canvas
   newObjects.forEach((newObj, targetIndex) => {
     if (!newObj.id) return
@@ -415,7 +424,7 @@ const mergeCanvasObjects = (canvas, newCanvasJson, isMutingRef, onDone) => {
   if (addedCount > 0 || updatedCount > 0 || removedCount > 0) {
     console.log('[mergeCanvasObjects] Merged: ' + addedCount + ' added, ' + updatedCount + ' updated, ' + removedCount + ' removed')
   }
-  
+
   canvas.requestRenderAll()
   if (isMutingRef) isMutingRef.current = false
   onDone()
@@ -428,7 +437,7 @@ const loadJsonIntoCanvas = (canvas, parsed, isMutingRef, onDone) => {
     if (onDone) onDone()
     return
   }
-  
+
   // Pre-process JSON to remove any pattern objects before Fabric.js tries to deserialize them
   if (parsed.objects) {
     parsed.objects.forEach(obj => {
@@ -438,7 +447,7 @@ const loadJsonIntoCanvas = (canvas, parsed, isMutingRef, onDone) => {
       }
     })
   }
-  
+
   // Suppress onMutation firing during load
   if (isMutingRef) isMutingRef.current = true
 
@@ -497,7 +506,7 @@ const loadJsonIntoCanvas = (canvas, parsed, isMutingRef, onDone) => {
     objs.forEach(obj => {
       obj.set({ selectable: true, evented: true, objectCaching: true, padding: 10 })
       if (obj.isEraserStroke) obj.set({ selectable: false, evented: false })
-      
+
       // Recreate fill patterns if fillPatternType is set
       if (obj.fillPatternType && obj.fillPatternType !== 'solid') {
         try {
@@ -505,13 +514,13 @@ const loadJsonIntoCanvas = (canvas, parsed, isMutingRef, onDone) => {
           patternCanvas.width = 10
           patternCanvas.height = 10
           const ctx = patternCanvas.getContext('2d')
-          
+
           if (!ctx) {
             console.error('[loadJsonIntoCanvas] Failed to get 2d context for pattern')
             obj.set({ fill: 'transparent' })
             return
           }
-          
+
           const patternColor = obj.fillPatternColor || obj.stroke || '#000000'
           ctx.strokeStyle = patternColor
           ctx.fillStyle = patternColor
@@ -546,12 +555,12 @@ const loadJsonIntoCanvas = (canvas, parsed, isMutingRef, onDone) => {
           obj.set({ fill: 'transparent' })
         }
       }
-      
+
       // Ensure stroke paths have minimum width for visibility
       if (obj.type === 'path' && obj.stroke && obj.strokeWidth < 1) {
         obj.set({ strokeWidth: 1.5 })
       }
-      
+
       if (obj.type === 'line') {
         // Clean up any previously-saved highlight color (#1a73e8) — restore to black.
         // This fixes lines that were accidentally saved while selected (old bug).
@@ -559,11 +568,29 @@ const loadJsonIntoCanvas = (canvas, parsed, isMutingRef, onDone) => {
           obj.set({ stroke: '#000000' })
         }
         normalizeLineOrigin(obj)
-        obj.set({ perPixelTargetFind: true, hasBorders: false, borderColor: 'transparent' })
+        obj.set({
+          perPixelTargetFind: true,
+          hasBorders: false,
+          borderColor: 'transparent',
+          objectCaching: false,  // Disable caching for smooth resizing
+          lockScalingX: true,
+          lockScalingY: true,
+          lockRotation: true
+        })
         applyLineControls(obj)
       }
       obj.setCoords()
     })
+
+    // Restore animations for objects that have animation properties
+    objs.forEach(obj => {
+      if (obj.animation && obj.animation !== 'none') {
+        // We'll restore animations in the component after load
+        // Mark objects that need animation restoration
+        obj._needsAnimationRestore = true
+      }
+    })
+
     // Check canvas validity before rendering (async callback might run after disposal)
     if (!canvas || !canvas.lowerCanvasEl) {
       console.warn('[loadJsonIntoCanvas] Canvas not available after JSON load')
@@ -572,7 +599,7 @@ const loadJsonIntoCanvas = (canvas, parsed, isMutingRef, onDone) => {
       return
     }
     console.log('[loadJsonIntoCanvas] Loaded', objs.length, 'objects')
-    
+
     canvas.requestRenderAll()
 
     // Re-apply z-order after a short delay to catch async image loads that fire after the callback
@@ -636,7 +663,7 @@ const deserializeCanvas = (canvas, isMutingRef, sessionId, onDone) => {
     .then((session) => {
       const canvasJson = session.canvasJson
       const background = session.background
-      
+
       console.log('[Whiteboard] Session loaded successfully. Objects count:', canvasJson?.objects?.length || 0, 'Background:', background)
       if (!canvas.lowerCanvasEl) {
         console.warn('[Whiteboard] Canvas disposed during load - skipping')
@@ -682,6 +709,7 @@ const CTX_ICONS = {
   delete: <><path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" /></>,
   group: <><rect x="2" y="7" width="9" height="9" rx="1.5" /><rect x="13" y="7" width="9" height="9" rx="1.5" /><path d="M8 4h8" strokeDasharray="2 1" /></>,
   ungroup: <><rect x="2" y="3" width="8" height="8" rx="1.5" /><rect x="14" y="13" width="8" height="8" rx="1.5" /><line x1="10" y1="7" x2="14" y2="17" strokeDasharray="2 2" /></>,
+  animate: <><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83" /><circle cx="12" cy="12" r="3" /></>,
 }
 
 const CtxMenu = ({ x, y, items, onClose }) => {
@@ -747,7 +775,7 @@ const TextFormatBar = ({ format, onChange, position }) => {
   // Use direct DOM manipulation for smooth position updates during drag
   useEffect(() => {
     if (!barRef.current || !position) return
-    
+
     let left = position.left
     let top = position.top - BAR_HEIGHT - MARGIN
 
@@ -760,8 +788,8 @@ const TextFormatBar = ({ format, onChange, position }) => {
   }, [position])
 
   const barStyle = {
-    position: 'fixed', 
-    left: 0, 
+    position: 'fixed',
+    left: 0,
     top: 0,
     transform: 'translate(0, 0)', // Initial position, will be updated by useEffect
     display: 'flex', alignItems: 'center', gap: 2,
@@ -832,114 +860,165 @@ const TextFormatBar = ({ format, onChange, position }) => {
 // ── Normalize line origin to 'center' (fixes lines saved with old originX:'left') ──
 const normalizeLineOrigin = (obj) => {
   if (obj.type !== 'line') return
+
+  // Ensure line always uses center origin
   if (obj.originX !== 'center' || obj.originY !== 'center') {
-    // Fabric saves x1/y1/x2/y2 as center-relative offsets; left/top is the old origin.
-    // With originX:'left', left=min(x1,x2) in canvas space. Midpoint = left + width/2.
+    // Calculate the current center point
+    const centerX = obj.left + (obj.x2 - obj.x1) / 2
+    const centerY = obj.top + (obj.y2 - obj.y1) / 2
+
+    // Recalculate x1, y1, x2, y2 relative to the new center
+    const newX1 = obj.x1 - (obj.x2 - obj.x1) / 2
+    const newY1 = obj.y1 - (obj.y2 - obj.y1) / 2
+    const newX2 = obj.x2 - (obj.x2 - obj.x1) / 2
+    const newY2 = obj.y2 - (obj.y2 - obj.y1) / 2
+
     obj.set({
-      originX: 'center', originY: 'center',
-      left: obj.left + (obj.width || 0) / 2,
-      top: obj.top + (obj.height || 0) / 2,
+      x1: newX1,
+      y1: newY1,
+      x2: newX2,
+      y2: newY2
+    })
+    obj.set({
+      originX: 'center',
+      originY: 'center',
+      left: centerX,
+      top: centerY
     })
   }
 }
 
 // ── Line endpoint controls ───────────────────────────────────────────────────
 const applyLineControls = (line) => {
-  // In Fabric.js, a Line's x1/y1/x2/y2 are stored relative to the line's
-  // own origin (left/top = midpoint when originX:'center'). So the absolute
-  // canvas position of endpoint p1 is (left + x1, top + y1).
-  const linePositionHandler = (pointKey) => function (_dim, _finalMatrix, fabricObject) {
+  // Position handler: calculates where to render each control point
+  const linePositionHandler = (pointIndex) => function (_dim, _finalMatrix, fabricObject) {
     const canvas = fabricObject.canvas
     if (!canvas) return new fabric.Point(0, 0)
 
-    // calcLinePoints() returns offsets from the midpoint (left/top) in unscaled coords.
-    // With originX:'center', left/top IS the midpoint, so left + offset = absolute endpoint.
-    const pts = fabricObject.calcLinePoints()
-    const x = (pointKey === 'p1' ? pts.x1 : pts.x2) + fabricObject.left
-    const y = (pointKey === 'p1' ? pts.y1 : pts.y2) + fabricObject.top
+    // For a line with originX/originY = 'center', the left/top is the center point
+    // x1, y1, x2, y2 are offsets from that center
+    const x = pointIndex === 0 ? fabricObject.x1 : fabricObject.x2
+    const y = pointIndex === 0 ? fabricObject.y1 : fabricObject.y2
 
-    return fabric.util.transformPoint({ x, y }, canvas.viewportTransform)
+    // Calculate absolute position: center + offset
+    const absX = fabricObject.left + x
+    const absY = fabricObject.top + y
+
+    // Apply viewport transform
+    return fabric.util.transformPoint(
+      new fabric.Point(absX, absY),
+      canvas.viewportTransform
+    )
   }
 
-  const lineActionHandler = (pointKey) => function (_evt, transform, x, y) {
+  // Action handler: updates the line when a control is dragged
+  const lineActionHandler = (pointIndex) => function (_evt, transform, x, y) {
     const fabricObject = transform.target
     const canvas = fabricObject.canvas
     if (!canvas) return false
 
-    // Screen → canvas coords
-    const pt = fabric.util.transformPoint(
-      { x, y },
+    // Convert pointer from screen to canvas coordinates
+    const pointer = fabric.util.transformPoint(
+      new fabric.Point(x, y),
       fabric.util.invertTransform(canvas.viewportTransform)
     )
 
-    // Get the current absolute positions of both endpoints
-    const pts = fabricObject.calcLinePoints()
-    const absX1 = fabricObject.left + pts.x1
-    const absY1 = fabricObject.top + pts.y1
-    const absX2 = fabricObject.left + pts.x2
-    const absY2 = fabricObject.top + pts.y2
+    // Calculate current absolute positions of both endpoints
+    const absX1 = fabricObject.left + fabricObject.x1
+    const absY1 = fabricObject.top + fabricObject.y1
+    const absX2 = fabricObject.left + fabricObject.x2
+    const absY2 = fabricObject.top + fabricObject.y2
 
-    // Update the dragged endpoint to the new position
-    const newX1 = pointKey === 'p1' ? pt.x : absX1
-    const newY1 = pointKey === 'p1' ? pt.y : absY1
-    const newX2 = pointKey === 'p2' ? pt.x : absX2
-    const newY2 = pointKey === 'p2' ? pt.y : absY2
+    // Update the endpoint being dragged
+    let newAbsX1 = absX1
+    let newAbsY1 = absY1
+    let newAbsX2 = absX2
+    let newAbsY2 = absY2
 
-    // New midpoint
-    const newMidX = (newX1 + newX2) / 2
-    const newMidY = (newY1 + newY2) / 2
+    if (pointIndex === 0) {
+      newAbsX1 = pointer.x
+      newAbsY1 = pointer.y
+    } else {
+      newAbsX2 = pointer.x
+      newAbsY2 = pointer.y
+    }
 
-    // Temporarily disable _setWidthHeight side-effects by setting directly
-    fabricObject.x1 = newX1 - newMidX
-    fabricObject.y1 = newY1 - newMidY
-    fabricObject.x2 = newX2 - newMidX
-    fabricObject.y2 = newY2 - newMidY
-    fabricObject.left = newMidX
-    fabricObject.top = newMidY
-    fabricObject.width = Math.abs(newX2 - newX1)
-    fabricObject.height = Math.abs(newY2 - newY1)
+    // Calculate new center
+    const newCenterX = (newAbsX1 + newAbsX2) / 2
+    const newCenterY = (newAbsY1 + newAbsY2) / 2
+
+    // Calculate new center-relative coordinates
+    const newX1 = newAbsX1 - newCenterX
+    const newY1 = newAbsY1 - newCenterY
+    const newX2 = newAbsX2 - newCenterX
+    const newY2 = newAbsY2 - newCenterY
+
+    // Update line properties
+    fabricObject.set({
+      x1: newX1,
+      y1: newY1,
+      x2: newX2,
+      y2: newY2,
+      left: newCenterX,
+      top: newCenterY
+    })
+
+    // Update coordinates and request render
     fabricObject.setCoords()
+    fabricObject.dirty = true
+
     return true
   }
 
-  const renderLineHandle = (ctx, left, top) => {
-    const size = 10
+  // Custom render for control points
+  const renderControl = (ctx, left, top, _styleOverride, fabricObject) => {
+    const size = 8
     ctx.save()
     ctx.translate(left, top)
-    ctx.fillStyle = '#ffffff'
-    ctx.strokeStyle = '#1a73e8'
-    ctx.lineWidth = 1.5
+
+    // Draw circle
     ctx.beginPath()
-    ctx.rect(-size / 2, -size / 2, size, size)
+    ctx.arc(0, 0, size, 0, 2 * Math.PI)
+    ctx.fillStyle = '#ffffff'
     ctx.fill()
+    ctx.strokeStyle = '#1a73e8'
+    ctx.lineWidth = 2
     ctx.stroke()
+
     ctx.restore()
   }
 
+  // Create controls for both endpoints
   line.controls = {
     p1: new fabric.Control({
-      positionHandler: linePositionHandler('p1'),
-      actionHandler: lineActionHandler('p1'),
-      render: renderLineHandle,
+      positionHandler: linePositionHandler(0),
+      actionHandler: lineActionHandler(0),
       actionName: 'modifyLine',
-      cursorStyle: 'crosshair',
+      render: renderControl,
+      cursorStyle: 'pointer',
     }),
     p2: new fabric.Control({
-      positionHandler: linePositionHandler('p2'),
-      actionHandler: lineActionHandler('p2'),
-      render: renderLineHandle,
+      positionHandler: linePositionHandler(1),
+      actionHandler: lineActionHandler(1),
       actionName: 'modifyLine',
-      cursorStyle: 'crosshair',
+      render: renderControl,
+      cursorStyle: 'pointer',
     }),
   }
-  line.set({ hasControls: true, hasBorders: false, borderColor: 'transparent', padding: 6 })
 
-  // Completely suppress the selection bounding box for lines
-  line.drawBorders = function() { return this }
-  line._renderControls = function(ctx, styleOverride) {
-    const so = Object.assign({}, styleOverride || {}, { hasBorders: false, borderColor: 'transparent' })
-    fabric.Object.prototype._renderControls.call(this, ctx, so)
-  }
+  // Configure line appearance
+  line.set({
+    hasControls: true,
+    hasBorders: false,
+    lockScalingX: true,
+    lockScalingY: true,
+    lockRotation: true,
+    padding: 10,
+    objectCaching: false  // Disable caching for smoother updates
+  })
+
+  // Hide the bounding box
+  line.drawBorders = function () { return this }
 }
 
 // ── Detect whether a canvas background colour is dark ────────────────────────
@@ -989,7 +1068,7 @@ const Whiteboard = ({
 }) => {
   console.log('[Whiteboard] Component render - user:', user ? `${user.name} (${user.email})` : 'NULL')
   console.log('[Whiteboard] Component render - currentSessionId:', currentSessionId)
-  
+
   // Ref to suppress local re-processing of our own realtime echo
   const realtimeIgnoreRef = useRef(false)
   const containerRef = useRef(null)
@@ -1030,7 +1109,7 @@ const Whiteboard = ({
   // Helper function to update presence only when state actually changes
   const updatePresenceIfChanged = useCallback((newState) => {
     const lastState = lastPresenceStateRef.current
-    
+
     // Only update if isEditing state has changed
     if (lastState.isEditing !== newState.isEditing) {
       console.log('[Whiteboard] Presence state changed:', lastState.isEditing, '→', newState.isEditing)
@@ -1048,6 +1127,8 @@ const Whiteboard = ({
   const [selectedObject, setSelectedObject] = useState(null)
   const [contextMenu, setContextMenu] = useState(null)
   const [textFormat, setTextFormat] = useState({ fontSize: 20, fontFamily: 'DM Sans', bold: false, italic: false })
+  const [isCanvasLoaded, setIsCanvasLoaded] = useState(false)
+  const [animationMenu, setAnimationMenu] = useState(null) // For animation submenu
   const [showTextBar, setShowTextBar] = useState(false)
   const [textBarPosition, setTextBarPosition] = useState(null)
 
@@ -1136,7 +1217,7 @@ const Whiteboard = ({
   useEffect(() => {
     const boardId = resolveBoardId()
     const urlSessionId = resolveSessionId()
-    
+
     // Only set session from URL if we don't have a currentSessionId yet
     if (urlSessionId && onSessionIdChange && !currentSessionId) {
       console.log('[Whiteboard] Using session from URL on initial load:', urlSessionId)
@@ -1146,7 +1227,7 @@ const Whiteboard = ({
       }))
       return
     }
-    
+
     // Otherwise load from Firestore
     if (boardId && onSessionIdChange && !currentSessionId) {
       // Get sessions from Firestore
@@ -1180,53 +1261,53 @@ const Whiteboard = ({
   // Load user history when session changes
   useEffect(() => {
     const boardId = resolveBoardId()
-    
+
     if (!boardId || !currentSessionId || !user?.email) {
       console.log('[Whiteboard] Skipping history load - boardId:', boardId, 'session:', currentSessionId, 'user:', user?.email)
       return
     }
-    
+
     // Don't reload history if we're in the middle of undo/redo
     if (isUndoRedoInProgressRef.current) {
       console.log('[Whiteboard] Skipping history load - undo/redo in progress')
       return
     }
-    
+
     const userEmail = user.email
     console.log('[Whiteboard] Loading history for:', userEmail, 'session:', currentSessionId)
-    
+
     getUserHistory(boardId, currentSessionId, userEmail)
       .then(historyData => {
         console.log('[Whiteboard] History loaded:', historyData.snapshots?.length || 0, 'snapshots')
-        
+
         if (historyData.snapshots && historyData.snapshots.length > 0) {
           historyRef.current = historyData.snapshots
           historyIdxRef.current = historyData.currentIndex
-          
+
           // Ensure index is within bounds
           if (historyIdxRef.current < -1) historyIdxRef.current = -1
           if (historyIdxRef.current >= historyData.snapshots.length) historyIdxRef.current = historyData.snapshots.length - 1
-          
+
           // Calculate button states for current user
           const userSnapshots = historyData.snapshots.filter(s => s.userEmail === userEmail)
-          
+
           // Find current position in user's history
           let currentUserIdx = -1
           if (historyIdxRef.current >= 0) {
             const currentSnapshot = historyData.snapshots[historyIdxRef.current]
             currentUserIdx = userSnapshots.indexOf(currentSnapshot)
           }
-          
+
           // Can undo if we're at any snapshot (including first one to get to empty)
           // Can't undo if we're already at empty canvas (index -1)
           const canUndo = historyIdxRef.current >= 0 && userSnapshots.length > 0
           const canRedo = currentUserIdx < userSnapshots.length - 1
-          
+
           console.log('[Whiteboard] History button states - canUndo:', canUndo, 'canRedo:', canRedo, 'currentIndex:', historyIdxRef.current, 'currentUserIdx:', currentUserIdx, 'total:', historyData.snapshots.length, 'userSnapshots:', userSnapshots.length)
-          
+
           // Update button states
           onHistoryChange?.({ canUndo, canRedo })
-          
+
           console.log(`[Whiteboard] ✓ Restored ${historyData.snapshots.length} snapshots for ${userEmail}`)
         } else {
           console.log('[Whiteboard] No history found in Firestore')
@@ -1252,145 +1333,145 @@ const Whiteboard = ({
     console.log('[Whiteboard]   - boardId:', boardId)
     console.log('[Whiteboard]   - user:', user ? `${user.name} (${user.email})` : 'null')
     console.log('[Whiteboard]   - currentSessionId:', currentSessionId)
-    
+
     if (!boardId || !user) {
       console.log('[Whiteboard] Skipping realtime init - boardId:', boardId, 'user:', user?.name)
       return
     }
 
     console.log('[Whiteboard] Initializing realtime for session:', currentSessionId || '(none)', 'user:', user.name)
-    
+
     // Track if this effect is still active
     let isActive = true
-    
+
     // Initialize realtime (initRealtime handles disconnecting if already connected)
     initRealtime(boardId, currentSessionId, (msg) => {
-        // Handle messages (this is the same handler as before)
-        if (!msg) return
-        console.log('[Whiteboard] Received realtime message:', msg.type)
-        
-        const currentCanvas = fabricRef.current
-        if (!currentCanvas) return
+      // Handle messages (this is the same handler as before)
+      if (!msg) return
+      console.log('[Whiteboard] Received realtime message:', msg.type)
 
-        // Handle canvas:clear
-        if (msg.type === 'canvas:clear') {
-          isMutingRef.current = true
-          currentCanvas.getObjects().slice().forEach(o => currentCanvas.remove(o))
-          const bg = msg.background || '#ffffff'
-          currentCanvas.setBackgroundColor(bg, () => {
-            if (currentCanvas.lowerCanvasEl) currentCanvas.renderAll()
-          })
-          isMutingRef.current = false
-          return
-        }
+      const currentCanvas = fabricRef.current
+      if (!currentCanvas) return
 
-        // Handle canvas:full
-        if (msg.type === 'canvas:full' && msg.canvasJson) {
-          // Skip if we're in the middle of an undo/redo operation
-          if (realtimeIgnoreRef.current) {
-            console.log('[Whiteboard] Ignoring canvas:full - undo/redo in progress')
-            return
-          }
-          
-          // Skip if user is actively editing text to prevent text from disappearing
-          if (isEditingTextRef.current) {
-            console.log('[Whiteboard] Ignoring canvas:full - user is editing text')
-            return
-          }
-          
-          const bgToApply = msg.background
-          realtimeIgnoreRef.current = true
-          mergeCanvasObjects(currentCanvas, msg.canvasJson, isMutingRef, () => {
-            if (bgToApply && currentCanvas.lowerCanvasEl) {
-              currentCanvas.setBackgroundColor(bgToApply, () => currentCanvas.requestRenderAll())
-            } else {
-              currentCanvas.requestRenderAll()
-            }
-            realtimeIgnoreRef.current = false
-          })
-          return
-        }
-
-        // Handle sync:request
-        if (msg.type === 'sync:request') {
-          if (currentCanvas && currentCanvas.lowerCanvasEl) {
-            publishFullCanvas({
-              type: 'canvas:full',
-              canvasJson: getSerializedCanvas(currentCanvas),
-              background: currentCanvas.backgroundColor || '#ffffff'
-            })
-          }
-        }
-      })
-    .then(() => {
-      // Only proceed if this effect is still active
-      if (!isActive) {
-        console.log('[Whiteboard] Effect cancelled, skipping presence enter')
+      // Handle canvas:clear
+      if (msg.type === 'canvas:clear') {
+        isMutingRef.current = true
+        currentCanvas.getObjects().slice().forEach(o => currentCanvas.remove(o))
+        const bg = msg.background || '#ffffff'
+        currentCanvas.setBackgroundColor(bg, () => {
+          if (currentCanvas.lowerCanvasEl) currentCanvas.renderAll()
+        })
+        isMutingRef.current = false
         return
       }
-      
-      // Enter presence
-      console.log('[Whiteboard] About to enter presence with:', user.name, user.email)
-      return enterPresence({
-        name: user.name,
-        email: user.email,
-        isEditing: false
-      })
-    })
-    .then(() => {
-      if (!isActive) return
-      console.log('[Whiteboard] Successfully entered presence')
 
-      // Heartbeat: keep lastSeen fresh so viewers don't get filtered out as stale
-      const heartbeatInterval = setInterval(() => {
-        if (!isActive) return
-        updatePresenceIfChanged({
+      // Handle canvas:full
+      if (msg.type === 'canvas:full' && msg.canvasJson) {
+        // Skip if we're in the middle of an undo/redo operation
+        if (realtimeIgnoreRef.current) {
+          console.log('[Whiteboard] Ignoring canvas:full - undo/redo in progress')
+          return
+        }
+
+        // Skip if user is actively editing text to prevent text from disappearing
+        if (isEditingTextRef.current) {
+          console.log('[Whiteboard] Ignoring canvas:full - user is editing text')
+          return
+        }
+
+        const bgToApply = msg.background
+        realtimeIgnoreRef.current = true
+        mergeCanvasObjects(currentCanvas, msg.canvasJson, isMutingRef, () => {
+          if (bgToApply && currentCanvas.lowerCanvasEl) {
+            currentCanvas.setBackgroundColor(bgToApply, () => currentCanvas.requestRenderAll())
+          } else {
+            currentCanvas.requestRenderAll()
+          }
+          realtimeIgnoreRef.current = false
+        })
+        return
+      }
+
+      // Handle sync:request
+      if (msg.type === 'sync:request') {
+        if (currentCanvas && currentCanvas.lowerCanvasEl) {
+          publishFullCanvas({
+            type: 'canvas:full',
+            canvasJson: getSerializedCanvas(currentCanvas),
+            background: currentCanvas.backgroundColor || '#ffffff'
+          })
+        }
+      }
+    })
+      .then(() => {
+        // Only proceed if this effect is still active
+        if (!isActive) {
+          console.log('[Whiteboard] Effect cancelled, skipping presence enter')
+          return
+        }
+
+        // Enter presence
+        console.log('[Whiteboard] About to enter presence with:', user.name, user.email)
+        return enterPresence({
           name: user.name,
           email: user.email,
           isEditing: false
         })
-      }, 60000) // every 60 seconds (optimized to reduce Firestore writes)
-      window._presenceHeartbeat = heartbeatInterval
-      
-      // Subscribe to viewport sync
-      const unsubViewport = onViewportSync((data) => {
-        const currentCanvas = fabricRef.current
-        if (!currentCanvas || !currentCanvas.lowerCanvasEl) return
-        
-        console.log('[Whiteboard] Received viewport sync:', data)
-        
-        // Temporarily disable viewport sync to prevent echo
-        setViewportSyncEnabled(false)
-        
-        const vpt = currentCanvas.viewportTransform.slice()
-        vpt[0] = data.zoom
-        vpt[3] = data.zoom
-        vpt[4] = data.panX
-        vpt[5] = data.panY
-        
-        currentCanvas.setViewportTransform(vpt)
-        currentCanvas.renderAll()
-        
-        console.log('[Whiteboard] Applied viewport sync - zoom:', data.zoom, 'pan:', data.panX, data.panY)
-        
-        // Re-enable after a short delay
-        setTimeout(() => {
-          setViewportSyncEnabled(true)
-        }, 200)
       })
-      
-      window._unsubViewport = unsubViewport
-    })
-    .catch(err => {
-      if (!isActive) return
-      console.error('[Whiteboard] Realtime init failed:', err)
-      console.error('[Whiteboard] Error details:', err.message, err.stack)
-    })
+      .then(() => {
+        if (!isActive) return
+        console.log('[Whiteboard] Successfully entered presence')
+
+        // Heartbeat: keep lastSeen fresh so viewers don't get filtered out as stale
+        const heartbeatInterval = setInterval(() => {
+          if (!isActive) return
+          updatePresenceIfChanged({
+            name: user.name,
+            email: user.email,
+            isEditing: false
+          })
+        }, 60000) // every 60 seconds (optimized to reduce Firestore writes)
+        window._presenceHeartbeat = heartbeatInterval
+
+        // Subscribe to viewport sync
+        const unsubViewport = onViewportSync((data) => {
+          const currentCanvas = fabricRef.current
+          if (!currentCanvas || !currentCanvas.lowerCanvasEl) return
+
+          console.log('[Whiteboard] Received viewport sync:', data)
+
+          // Temporarily disable viewport sync to prevent echo
+          setViewportSyncEnabled(false)
+
+          const vpt = currentCanvas.viewportTransform.slice()
+          vpt[0] = data.zoom
+          vpt[3] = data.zoom
+          vpt[4] = data.panX
+          vpt[5] = data.panY
+
+          currentCanvas.setViewportTransform(vpt)
+          currentCanvas.renderAll()
+
+          console.log('[Whiteboard] Applied viewport sync - zoom:', data.zoom, 'pan:', data.panX, data.panY)
+
+          // Re-enable after a short delay
+          setTimeout(() => {
+            setViewportSyncEnabled(true)
+          }, 200)
+        })
+
+        window._unsubViewport = unsubViewport
+      })
+      .catch(err => {
+        if (!isActive) return
+        console.error('[Whiteboard] Realtime init failed:', err)
+        console.error('[Whiteboard] Error details:', err.message, err.stack)
+      })
 
     return () => {
       // Mark effect as inactive
       isActive = false
-      
+
       // Cleanup heartbeat
       if (window._presenceHeartbeat) {
         clearInterval(window._presenceHeartbeat)
@@ -1402,7 +1483,7 @@ const Whiteboard = ({
         window._unsubViewport()
         window._unsubViewport = null
       }
-      
+
       // Note: We don't disconnect realtime here because:
       // 1. React StrictMode causes double-mount which would disconnect prematurely
       // 2. initRealtime() handles switching channels automatically
@@ -1415,15 +1496,15 @@ const Whiteboard = ({
     if (!canvas || isMutingRef.current) return
     // Don't push if canvas is disposed (StrictMode cleanup)
     if (!canvas.lowerCanvasEl || !canvas.wrapperEl) return
-    
+
     // Don't create snapshots for changes from realtime sync (other users)
     if (realtimeIgnoreRef.current) {
       console.log('[pushSnapshot] Skipping snapshot - change from realtime sync')
       return
     }
-    
+
     const json = getSerializedCanvas(canvas)
-    
+
     // Tag all current objects with the current user's email if not already tagged
     const userEmail = user?.email || 'anonymous'
     canvas.getObjects().forEach(obj => {
@@ -1431,7 +1512,7 @@ const Whiteboard = ({
         obj.createdBy = userEmail
       }
     })
-    
+
     // Create snapshot with user metadata for per-user undo/redo
     const snapshot = {
       canvasJson: json,
@@ -1440,25 +1521,25 @@ const Whiteboard = ({
       // Track which object IDs were present in this snapshot
       objectIds: json.objects?.map(o => o.id).filter(Boolean) || []
     }
-    
+
     // Avoid duplicate consecutive snapshots (prevents double-click-to-undo issue)
     const prev = historyRef.current[historyIdxRef.current]
     if (prev && JSON.stringify(snapshot.canvasJson) === JSON.stringify(prev.canvasJson)) {
       console.log('[pushSnapshot] Skipping duplicate snapshot')
       return
     }
-    
+
     // When creating a new snapshot after undo, we need to:
     // 1. Remove future snapshots from in-memory array
     // 2. Delete ALL user history from Firestore and re-save only the kept snapshots
     //    (ID-based deletion is unreliable because IDs are set asynchronously)
     const isBranching = historyIdxRef.current < historyRef.current.length - 1
-    
+
     // Trim in-memory history to current position
     historyRef.current = historyRef.current.slice(0, historyIdxRef.current + 1)
     historyRef.current.push(snapshot)
     historyIdxRef.current = historyRef.current.length - 1
-    
+
     if (isBranching) {
       console.log('[pushSnapshot] Branching history - clearing Firestore and re-saving kept snapshots')
       const boardId = resolveBoardId()
@@ -1466,7 +1547,7 @@ const Whiteboard = ({
       if (boardId && sessionId && userEmail) {
         // Get the snapshots to keep (all user snapshots up to and including the new one)
         const snapshotsToKeep = historyRef.current.filter(s => s.userEmail === userEmail)
-        
+
         // Clear all user history from Firestore, then re-save kept snapshots in order
         clearUserHistory(boardId, sessionId, userEmail)
           .then(async () => {
@@ -1484,19 +1565,19 @@ const Whiteboard = ({
       }
     }
     console.log('[pushSnapshot] Created snapshot #' + historyIdxRef.current + ' by ' + snapshot.userEmail + ' (total: ' + historyRef.current.length + ')')
-    
+
     // Calculate undo/redo availability for current user only
     const userSnapshots = historyRef.current.filter(s => s.userEmail === user?.email)
     const currentUserSnapshotIndex = userSnapshots.findIndex(s => s === snapshot)
-    
+
     // User can undo if they have at least 1 snapshot (to get back to empty canvas)
     const canUndo = userSnapshots.length > 0
     const canRedo = false // Can't redo after a new change
-    
+
     console.log('[pushSnapshot] Button states - canUndo:', canUndo, 'canRedo:', canRedo, 'userSnapshots:', userSnapshots.length)
-    
+
     onHistoryChange?.({ canUndo, canRedo })
-    
+
     // Save history to Firestore for persistence across refreshes (per-session, per-user)
     const boardId = resolveBoardId()
     const sessionId = currentSessionIdRef.current
@@ -1515,16 +1596,16 @@ const Whiteboard = ({
   const applySnapshot = useCallback((snapshot, userEmail) => {
     const canvas = fabricRef.current
     if (!canvas) return
-    
+
     // Handle both old format (plain JSON) and new format (with metadata)
     const json = snapshot?.canvasJson || snapshot
     const snapshotObjectIds = snapshot?.objectIds || []
-    
+
     if (!json || typeof json !== 'object') {
       console.warn('[Whiteboard] Invalid snapshot data:', snapshot)
       return
     }
-    
+
     // Get current objects on canvas
     const currentObjects = canvas.getObjects()
     const currentObjectMap = {}
@@ -1533,7 +1614,7 @@ const Whiteboard = ({
         currentObjectMap[obj.id] = obj
       }
     })
-    
+
     // Get snapshot objects
     const snapshotObjects = json.objects || []
     const snapshotObjectMap = {}
@@ -1542,13 +1623,13 @@ const Whiteboard = ({
         snapshotObjectMap[obj.id] = obj
       }
     })
-    
+
     console.log('[applySnapshot] Current objects:', Object.keys(currentObjectMap).length, 'Snapshot objects:', Object.keys(snapshotObjectMap).length)
-    
+
     // For per-user undo: Only modify objects that belong to this user
     // Keep objects from other users untouched
     isMutingRef.current = true
-    
+
     // Remove objects that are in current canvas but not in snapshot (user's deleted objects)
     const objectsToRemove = []
     currentObjects.forEach(obj => {
@@ -1559,14 +1640,14 @@ const Whiteboard = ({
         }
       }
     })
-    
+
     objectsToRemove.forEach(obj => {
       console.log('[applySnapshot] Removing object:', obj.id, 'created by:', obj.createdBy)
       if (obj.stickyText) canvas.remove(obj.stickyText)
       if (obj.stickyRect) canvas.remove(obj.stickyRect)
       canvas.remove(obj)
     })
-    
+
     // Add or update objects from snapshot
     const objectsToAdd = []
     snapshotObjects.forEach(snapshotObj => {
@@ -1585,6 +1666,13 @@ const Whiteboard = ({
             strokeWidth: snapshotObj.strokeWidth,
             opacity: snapshotObj.opacity,
           })
+
+          // Update text content and placeholder state for text objects
+          if ((existingObj.type === 'textbox' || existingObj.type === 'i-text') && snapshotObj.text !== undefined) {
+            existingObj.set({ text: snapshotObj.text })
+            existingObj.isPlaceholder = (snapshotObj.text.trim() === '')
+          }
+
           existingObj.setCoords()
         } else {
           // Object doesn't exist - add it (only if it belongs to this user)
@@ -1605,80 +1693,93 @@ const Whiteboard = ({
         canvas.moveTo(existingObj, targetIndex)
       }
     })
-    
+
     // Add new objects
     if (objectsToAdd.length > 0) {
-      fabric.util.enlivenObjects(objectsToAdd, function(enlivenedObjects) {
+      fabric.util.enlivenObjects(objectsToAdd, function (enlivenedObjects) {
         enlivenedObjects.forEach(obj => {
           console.log('[applySnapshot] Adding object:', obj.id, 'created by:', obj.createdBy)
           obj.set({ selectable: true, evented: true })
           if (obj.type === 'line') {
             normalizeLineOrigin(obj)
-            obj.set({ perPixelTargetFind: true, hasBorders: false })
+            obj.set({
+              perPixelTargetFind: true,
+              hasBorders: false,
+              objectCaching: false,
+              lockScalingX: true,
+              lockScalingY: true,
+              lockRotation: true
+            })
             applyLineControls(obj)
           }
+
+          // Set correct placeholder state for text objects
+          if (obj.type === 'textbox' || obj.type === 'i-text') {
+            obj.isPlaceholder = (obj.text && obj.text.trim() === '')
+          }
+
           canvas.add(obj)
         })
         canvas.requestRenderAll()
       }, null)
     }
-    
+
     canvas.requestRenderAll()
     isMutingRef.current = false
   }, [])
 
   const undo = useCallback(() => {
     console.log('[undo] ========== UNDO START ==========')
-    
+
     // Set flag to prevent history reload during undo
     isUndoRedoInProgressRef.current = true
-    
+
     const userEmail = user?.email
     if (!userEmail) {
       console.warn('[undo] No user email - cannot undo')
       isUndoRedoInProgressRef.current = false
       return
     }
-    
+
     console.log('[undo] Current state:')
     console.log('[undo]   - Total snapshots:', historyRef.current.length)
     console.log('[undo]   - Current index:', historyIdxRef.current)
     console.log('[undo]   - User email:', userEmail)
-    
+
     // Current user's snapshots only
     const userSnapshots = historyRef.current.filter(s => s.userEmail === userEmail)
     console.log('[undo]   - User snapshots:', userSnapshots.length)
-    
+
     if (userSnapshots.length === 0) {
       console.log('[undo] No snapshots found for current user')
       isUndoRedoInProgressRef.current = false
       return
     }
-    
+
     // Find current position in user's history
     const currentSnapshot = historyRef.current[historyIdxRef.current]
     const currentUserIdx = userSnapshots.indexOf(currentSnapshot)
-    
+
     console.log('[undo]   - Current snapshot:', currentSnapshot ? 'found' : 'null')
     console.log('[undo]   - Current user index:', currentUserIdx)
-    
+
     if (currentUserIdx < 0) {
       console.log('[undo] Current snapshot not found in user history')
       isUndoRedoInProgressRef.current = false
       return
     }
-    
+
     // If at first snapshot (index 0), undo to empty canvas
     if (currentUserIdx === 0) {
       console.log('[undo] At first snapshot - clearing canvas to empty state')
-      
+
       // Clear canvas to empty state
       const canvas = fabricRef.current
       if (canvas) {
         isMutingRef.current = true
-        
+
         // Remove only objects created by this user
-        const objectsToRemove = canvas.getObjects().filter(obj => 
+        const objectsToRemove = canvas.getObjects().filter(obj =>
           obj.createdBy === userEmail || !obj.createdBy
         )
         objectsToRemove.forEach(obj => {
@@ -1687,15 +1788,15 @@ const Whiteboard = ({
           if (obj.stickyRect) canvas.remove(obj.stickyRect)
           canvas.remove(obj)
         })
-        
+
         canvas.requestRenderAll()
         isMutingRef.current = false
       }
-      
+
       // Update to "before first snapshot" state
       historyIdxRef.current = -1
       onHistoryChange?.({ canUndo: false, canRedo: true })
-      
+
       // Save updated index to Firestore
       const boardId = resolveBoardId()
       const sessionId = currentSessionIdRef.current
@@ -1703,17 +1804,17 @@ const Whiteboard = ({
         updateUserHistoryIndex(boardId, sessionId, userEmail, -1)
           .catch(err => console.warn('[undo] Failed to save history index:', err))
       }
-      
+
       // Broadcast and save empty state
       setTimeout(() => {
         const canvas = fabricRef.current
         if (canvas && canvas.lowerCanvasEl) {
           const canvasJson = getSerializedCanvas(canvas)
           const background = canvas.backgroundColor || '#ffffff'
-          
+
           console.log('[undo] Broadcasting empty canvas state')
           publishFullCanvas({ type: 'canvas:full', canvasJson, background })
-          
+
           if (boardId && sessionId) {
             saveToSessionImmediate(boardId, sessionId, canvasJson, background)
               .then(() => {
@@ -1744,28 +1845,28 @@ const Whiteboard = ({
           isUndoRedoInProgressRef.current = false
         }
       }, 50)
-      
+
       console.log('[undo] ========== UNDO END (empty canvas) ==========')
       return
     }
-    
+
     // Go to previous user snapshot (normal undo)
     const targetSnapshot = userSnapshots[currentUserIdx - 1]
     const targetGlobalIdx = historyRef.current.indexOf(targetSnapshot)
-    
+
     if (targetGlobalIdx === -1) {
       console.warn('[undo] Target snapshot not found in global history')
       return
     }
-    
+
     console.log('[undo] User ' + userEmail + ' going from snapshot #' + historyIdxRef.current + ' to #' + targetGlobalIdx)
-    
+
     // Set flag to ignore realtime updates during undo
     realtimeIgnoreRef.current = true
-    
+
     historyIdxRef.current = targetGlobalIdx
     applySnapshot(targetSnapshot, userEmail)
-    
+
     // Update button states based on NEW position
     const newUserIdx = currentUserIdx - 1
     // Can undo if we're at snapshot 0 or higher (can undo to empty from snapshot 0)
@@ -1773,7 +1874,7 @@ const Whiteboard = ({
     const canRedo = newUserIdx < userSnapshots.length - 1
     console.log('[undo] New button states - canUndo:', canUndoMore, 'canRedo:', canRedo, 'newUserIdx:', newUserIdx)
     onHistoryChange?.({ canUndo: canUndoMore, canRedo })
-    
+
     // Save updated index to Firestore
     const boardId = resolveBoardId()
     const sessionId = currentSessionIdRef.current
@@ -1781,7 +1882,7 @@ const Whiteboard = ({
       updateUserHistoryIndex(boardId, sessionId, userEmail, historyIdxRef.current)
         .catch(err => console.warn('[undo] Failed to save history index:', err))
     }
-    
+
     // Save the undone state to database and broadcast immediately
     // This ensures all collaborators see the undo
     setTimeout(() => {
@@ -1791,9 +1892,9 @@ const Whiteboard = ({
         const canvasJson = getSerializedCanvas(canvas)
         const background = canvas.backgroundColor || '#ffffff'
         const sessionId = currentSessionIdRef.current
-        
+
         console.log('[undo] Broadcasting undone state to collaborators')
-        
+
         // Broadcast to collaborators FIRST (before database save)
         const messageSize = JSON.stringify({ canvasJson, background }).length
         if (messageSize < 60000) {
@@ -1802,7 +1903,7 @@ const Whiteboard = ({
         } else {
           console.warn('[undo] Canvas too large to broadcast:', messageSize, 'bytes - using database only')
         }
-        
+
         // Then save to database
         if (boardId && sessionId) {
           saveToSessionImmediate(boardId, sessionId, canvasJson, background)
@@ -1829,55 +1930,55 @@ const Whiteboard = ({
 
   const redo = useCallback(() => {
     console.log('[redo] ========== REDO START ==========')
-    
+
     // Set flag to prevent history reload during redo
     isUndoRedoInProgressRef.current = true
-    
+
     const userEmail = user?.email
     if (!userEmail) {
       console.warn('[redo] No user email - cannot redo')
       isUndoRedoInProgressRef.current = false
       return
     }
-    
+
     console.log('[redo] Current state:')
     console.log('[redo]   - Total snapshots:', historyRef.current.length)
     console.log('[redo]   - Current index:', historyIdxRef.current)
-    
+
     // Current user's snapshots only
     const userSnapshots = historyRef.current.filter(s => s.userEmail === userEmail)
     console.log('[redo]   - User snapshots:', userSnapshots.length)
-    
+
     if (userSnapshots.length === 0) {
       console.log('[redo] No snapshots found for current user')
       isUndoRedoInProgressRef.current = false
       return
     }
-    
+
     // If at empty canvas state (index -1), redo to first snapshot
     if (historyIdxRef.current === -1) {
       console.log('[redo] At empty canvas - redoing to first snapshot')
-      
+
       const targetSnapshot = userSnapshots[0]
       const targetGlobalIdx = historyRef.current.indexOf(targetSnapshot)
-      
+
       if (targetGlobalIdx === -1) {
         console.warn('[redo] First snapshot not found in global history')
         return
       }
-      
+
       // Set flag to ignore realtime updates during redo
       realtimeIgnoreRef.current = true
-      
+
       historyIdxRef.current = targetGlobalIdx
       applySnapshot(targetSnapshot, userEmail)
-      
+
       // Update button states
       const canUndo = true // Can now undo back to empty
       const canRedo = userSnapshots.length > 1 // Can redo if more snapshots exist
       console.log('[redo] New button states - canUndo:', canUndo, 'canRedo:', canRedo)
       onHistoryChange?.({ canUndo, canRedo })
-      
+
       // Save and broadcast
       const boardId = resolveBoardId()
       const sessionId = currentSessionIdRef.current
@@ -1885,16 +1986,16 @@ const Whiteboard = ({
         updateUserHistoryIndex(boardId, sessionId, userEmail, historyIdxRef.current)
           .catch(err => console.warn('[redo] Failed to save history index:', err))
       }
-      
+
       setTimeout(() => {
         const canvas = fabricRef.current
         if (canvas) {
           const canvasJson = getSerializedCanvas(canvas)
           const background = canvas.backgroundColor || '#ffffff'
-          
+
           console.log('[redo] Broadcasting redone state')
           publishFullCanvas({ type: 'canvas:full', canvasJson, background })
-          
+
           if (boardId && sessionId) {
             saveToSessionImmediate(boardId, sessionId, canvasJson, background)
               .then(() => {
@@ -1921,48 +2022,48 @@ const Whiteboard = ({
           isUndoRedoInProgressRef.current = false
         }
       }, 50)
-      
+
       console.log('[redo] ========== REDO END (from empty) ==========')
       return
     }
-    
+
     // Find current position in user's history
     const currentSnapshot = historyRef.current[historyIdxRef.current]
     const currentUserIdx = userSnapshots.indexOf(currentSnapshot)
-    
+
     console.log('[redo]   - Current user index:', currentUserIdx)
-    
+
     if (currentUserIdx >= userSnapshots.length - 1) {
       console.log('[redo] Already at latest snapshot for current user')
       isUndoRedoInProgressRef.current = false
       return
     }
-    
+
     // Go to next user snapshot
     const targetSnapshot = userSnapshots[currentUserIdx + 1]
     const targetGlobalIdx = historyRef.current.indexOf(targetSnapshot)
-    
+
     if (targetGlobalIdx === -1) {
       console.warn('[redo] Target snapshot not found in global history')
       isUndoRedoInProgressRef.current = false
       return
     }
-    
+
     console.log('[redo] User ' + userEmail + ' going from snapshot #' + historyIdxRef.current + ' to #' + targetGlobalIdx)
-    
+
     // Set flag to ignore realtime updates during redo
     realtimeIgnoreRef.current = true
-    
+
     historyIdxRef.current = targetGlobalIdx
     applySnapshot(targetSnapshot, userEmail)
-    
+
     // Update button states based on NEW position
     const newUserIdx = currentUserIdx + 1
     const canUndo = true // Always can undo if we have snapshots
     const canRedoMore = newUserIdx < userSnapshots.length - 1
     console.log('[redo] New button states - canUndo:', canUndo, 'canRedo:', canRedoMore)
     onHistoryChange?.({ canUndo, canRedo: canRedoMore })
-    
+
     // Save updated index to Firestore
     const boardId = resolveBoardId()
     const sessionId = currentSessionIdRef.current
@@ -1970,7 +2071,7 @@ const Whiteboard = ({
       updateUserHistoryIndex(boardId, sessionId, userEmail, historyIdxRef.current)
         .catch(err => console.warn('[redo] Failed to save history index:', err))
     }
-    
+
     // Save to database and broadcast after snapshot is applied
     // This ensures all collaborators see the redo
     setTimeout(() => {
@@ -1979,9 +2080,9 @@ const Whiteboard = ({
         const canvasJson = getSerializedCanvas(canvas)
         const background = canvas.backgroundColor || '#ffffff'
         const sessionId = currentSessionIdRef.current
-        
+
         console.log('[redo] Broadcasting redone state to collaborators')
-        
+
         // Broadcast to collaborators FIRST (before database save)
         const messageSize = JSON.stringify({ canvasJson, background }).length
         if (messageSize < 60000) {
@@ -1990,7 +2091,7 @@ const Whiteboard = ({
         } else {
           console.warn('[redo] Canvas too large to broadcast:', messageSize, 'bytes - using database only')
         }
-        
+
         // Then save to database
         if (boardId && sessionId) {
           saveToSessionImmediate(boardId, sessionId, canvasJson, background)
@@ -2025,9 +2126,9 @@ const Whiteboard = ({
   const clearCanvas = useCallback(async () => {
     const canvas = fabricRef.current
     if (!canvas) return
-    
+
     console.log('[clearCanvas] Clearing canvas and resetting history')
-    
+
     isMutingRef.current = true
     canvas.getObjects().slice().forEach(obj => {
       if (obj.stickyText) canvas.remove(obj.stickyText)
@@ -2037,16 +2138,16 @@ const Whiteboard = ({
     isMutingRef.current = false
     canvas.discardActiveObject()
     canvas.renderAll()
-    
+
     // Mark that canvas was intentionally cleared (permanent marker)
     lastLocalChangeRef.current = Date.now()
-    
+
     // Broadcast clear to all collaborators FIRST
     const boardId = resolveBoardId()
     if (boardId) {
       publishClear({ type: 'canvas:clear', background: canvas.backgroundColor || '#ffffff' })
     }
-    
+
     // Save the cleared state to DB IMMEDIATELY (no debounce)
     const json = getSerializedCanvas(canvas)
     const sessionId = currentSessionIdRef.current
@@ -2054,17 +2155,17 @@ const Whiteboard = ({
       await saveToSessionImmediate(boardId, sessionId, json, canvas.backgroundColor || '#ffffff')
       console.log('[clearCanvas] Empty canvas saved to database')
     }
-    
+
     // Reset history AFTER saving to DB
     historyRef.current = []
     historyIdxRef.current = -1
-    
+
     // Clear ALL users' history from Firestore (not just current user)
     if (boardId && sessionId) {
       clearAllSessionHistory(boardId, sessionId)
         .catch(err => console.warn('[clearCanvas] Failed to clear all Firestore history:', err))
     }
-    
+
     // Create initial empty snapshot after a short delay
     setTimeout(() => {
       if (!canvas || !canvas.lowerCanvasEl) return
@@ -2077,7 +2178,7 @@ const Whiteboard = ({
       historyIdxRef.current = 0
       onHistoryChange?.({ canUndo: false, canRedo: false })
       console.log('[clearCanvas] Created empty snapshot')
-      
+
       // Save initial empty snapshot to Firestore
       if (boardId && sessionId && userEmail) {
         saveUserHistorySnapshot(boardId, sessionId, userEmail, emptySnapshot)
@@ -2132,7 +2233,7 @@ const Whiteboard = ({
       canvas.setActiveObject(img)
       canvas.renderAll()
       setTool('select')
-      
+
       // Trigger synchronization after image is loaded and added
       setTimeout(() => {
         onMutation()
@@ -2145,16 +2246,19 @@ const Whiteboard = ({
   const reloadSession = useCallback((sessionId) => {
     const canvas = fabricRef.current
     if (!canvas || !canvas.lowerCanvasEl) return
-    
+
     // Use provided sessionId or fall back to current
     const targetSessionId = sessionId || currentSessionIdRef.current
     if (!targetSessionId) {
       console.warn('[Whiteboard] No session ID provided for reload')
       return
     }
-    
+
     console.log('[Whiteboard] Reloading session:', targetSessionId)
-    
+
+    // Hide canvas during reload to prevent blink
+    setIsCanvasLoaded(false)
+
     // Clear current canvas
     isMutingRef.current = true
     canvas.getObjects().slice().forEach(obj => {
@@ -2164,17 +2268,18 @@ const Whiteboard = ({
     })
     canvas.discardActiveObject()
     isMutingRef.current = false
-    
+
     // Reset history
     historyRef.current = []
     historyIdxRef.current = -1
     onHistoryChange?.({ canUndo: false, canRedo: false })
-    
+
     // Reload canvas data from database
     deserializeCanvas(canvas, isMutingRef, targetSessionId, (result) => {
       console.log('[Whiteboard] Session reloaded successfully')
+      setIsCanvasLoaded(true) // Show canvas after reload
       canvas.renderAll()
-      
+
       // Create initial snapshot with user metadata
       const snapshot = {
         canvasJson: getSerializedCanvas(canvas),
@@ -2221,16 +2326,17 @@ const Whiteboard = ({
     historyRef.current = []
     historyIdxRef.current = -1
     isLoadedRef.current = false
+    setIsCanvasLoaded(false) // Reset loading state on mount
     mountedRef.current = true
     const canvas = new fabric.Canvas(canvasRef.current, {
       width: container.clientWidth,
       height: container.clientHeight,
       backgroundColor: canvasBackground || '#ffffff',
       selection: true,
-      selectionColor: 'rgba(26,115,232,0.07)',
-      selectionBorderColor: '#1a73e8',
-      selectionLineWidth: 1.5,
-      selectionDashArray: [5, 3],
+      selectionColor: 'rgba(26,115,232,0.2)',  // More visible blue fill
+      selectionBorderColor: '#1a73e8',  // Solid blue border
+      selectionLineWidth: 2,  // Thicker border for better visibility
+      selectionDashArray: [],  // Solid line instead of dashed
       preserveObjectStacking: true,
       defaultCursor: 'default',
       hoverCursor: 'move',
@@ -2250,6 +2356,13 @@ const Whiteboard = ({
       hoverCursor: 'move',
       moveCursor: 'move',
     })
+
+    // Set text selection colors for IText and Textbox
+    fabric.IText.prototype.selectionColor = 'rgba(26, 115, 232, 0.3)'
+    fabric.IText.prototype.selectionBackgroundColor = 'rgba(26, 115, 232, 0.3)'
+    fabric.Textbox.prototype.selectionColor = 'rgba(26, 115, 232, 0.3)'
+    fabric.Textbox.prototype.selectionBackgroundColor = 'rgba(26, 115, 232, 0.3)'
+
     fabricRef.current = canvas
     setCanvasRef(canvas)
 
@@ -2279,20 +2392,23 @@ const Whiteboard = ({
       // Track which sessionId was used for the initial load.
       // Use URL as fallback (same logic as deserializeCanvas).
       isLoadedRef.sessionId = currentSessionId || resolveSessionId()
-      
+
       console.log('[Whiteboard] Canvas loaded. Dimensions:', canvas.getWidth(), 'x', canvas.getHeight(), 'Objects:', canvas.getObjects().length)
-      
+
+      // Set canvas as loaded to remove opacity and prevent blink
+      setIsCanvasLoaded(true)
+
       // Sync the background AND the UI theme to match what the DB stored
       const loadedBg = canvas.backgroundColor
       if (loadedBg && typeof syncBoardAppearance === 'function') {
         syncBoardAppearance(loadedBg)
       }
-      
+
       // Common variables used throughout
       const bid = resolveBoardId()
       const params = new URLSearchParams(window.location.search)
       const isSharedBoard = params.get('board') !== null
-      
+
       // If database load failed, request sync from collaborators after realtime connects
       if (result && result.requestSync) {
         console.log('[Whiteboard] Will request sync from collaborators')
@@ -2303,7 +2419,7 @@ const Whiteboard = ({
           }
         }, 1000) // Wait 1 second for realtime to fully connect
       }
-      
+
       // Restore viewport transform from localStorage (but NOT for shared boards)
       if (bid && canvas.lowerCanvasEl && canvas.wrapperEl && !isSharedBoard) {
         const savedVpt = localStorage.getItem(`wb_viewport_${bid}`)
@@ -2321,12 +2437,12 @@ const Whiteboard = ({
           }
         }
       }
-      
+
       // Auto-center viewport on content for shared boards
       // If there are objects on the canvas, center the viewport so User 2 can see what's there
       const objects = canvas.getObjects()
       console.log('[Whiteboard] After load - objects on canvas:', objects.length, 'Is shared board:', isSharedBoard)
-      
+
       if (bid && objects.length > 0 && isSharedBoard) {
         console.log('[Whiteboard] Auto-centering viewport on content for shared board')
         // Calculate bounding box of all objects
@@ -2336,25 +2452,25 @@ const Whiteboard = ({
           allCoords.push({ x: bounds.left, y: bounds.top })
           allCoords.push({ x: bounds.left + bounds.width, y: bounds.top + bounds.height })
         })
-        
+
         if (allCoords.length > 0) {
           const minX = Math.min(...allCoords.map(c => c.x))
           const maxX = Math.max(...allCoords.map(c => c.x))
           const minY = Math.min(...allCoords.map(c => c.y))
           const maxY = Math.max(...allCoords.map(c => c.y))
-          
+
           console.log('[Whiteboard] Content bounds:', { minX, maxX, minY, maxY })
-          
+
           const contentWidth = Math.max(maxX - minX, 1)
           const contentHeight = Math.max(maxY - minY, 1)
           const contentCenterX = minX + contentWidth / 2
           const contentCenterY = minY + contentHeight / 2
-          
+
           const canvasWidth = canvas.getWidth()
           const canvasHeight = canvas.getHeight()
-          
+
           console.log('[Whiteboard] Content size:', contentWidth, 'x', contentHeight, 'Canvas:', canvasWidth, 'x', canvasHeight)
-          
+
           // Calculate zoom to fit content with some padding
           // Constrain zoom between 0.1 (10%) and 2 (200%)
           let zoom = Math.min(
@@ -2362,21 +2478,21 @@ const Whiteboard = ({
             (canvasHeight * 0.8) / contentHeight
           )
           zoom = Math.max(0.1, Math.min(2, zoom)) // Clamp between 0.1 and 2
-          
+
           console.log('[Whiteboard] Calculated zoom:', zoom)
-          
+
           // Center the viewport on the content
           const vpt = canvas.viewportTransform
           vpt[0] = zoom
           vpt[3] = zoom
           vpt[4] = canvasWidth / 2 - contentCenterX * zoom
           vpt[5] = canvasHeight / 2 - contentCenterY * zoom
-          
+
           console.log('[Whiteboard] Setting viewport transform:', vpt)
-          
+
           canvas.setViewportTransform(vpt)
           canvas.requestRenderAll()
-          
+
           console.log('[Whiteboard] Auto-centered viewport. Zoom:', zoom, 'Center:', contentCenterX, contentCenterY)
         } else {
           console.warn('[Whiteboard] No coordinates found for auto-centering')
@@ -2387,7 +2503,7 @@ const Whiteboard = ({
         console.log('[Whiteboard] Using own board viewport')
         canvas.requestRenderAll()
       }
-      
+
       // Final render to ensure everything is visible
       setTimeout(() => {
         if (canvas && canvas.lowerCanvasEl) {
@@ -2399,23 +2515,23 @@ const Whiteboard = ({
 
     // ── Initialize Ably realtime collaboration ────────────────────────────
     const boardId = resolveBoardId()
-    
+
     // Throttled function to broadcast full canvas state
     const broadcastCanvas = throttle(() => {
       if (!boardId || realtimeIgnoreRef.current) return
       const canvasJson = getSerializedCanvas(canvas)
       const background = canvas.backgroundColor || '#ffffff'
-      
+
       // Check message size before broadcasting (Ably limit: 65KB)
       const messageSize = JSON.stringify({ canvasJson, background }).length
       const MAX_MESSAGE_SIZE = 60000 // 60KB to be safe
-      
+
       if (messageSize > MAX_MESSAGE_SIZE) {
         console.warn('[Whiteboard] Canvas too large for realtime broadcast:', messageSize, 'bytes. Using database sync only.')
         // Don't broadcast, just save to database (already happening via serializeCanvas)
         return
       }
-      
+
       console.log('[Whiteboard] Broadcasting canvas update to collaborators (', messageSize, 'bytes)')
       publishFullCanvas({
         type: 'canvas:full',
@@ -2445,10 +2561,10 @@ const Whiteboard = ({
       // Don't create history entries until initial load is complete
       if (!isLoadedRef.current) return
       if (isMutingRef.current || isDrawingRef.current || realtimeIgnoreRef.current) return
-      
+
       // Track that we made a local change
       lastLocalChangeRef.current = Date.now()
-      
+
       // Update presence to show user is editing
       if (user) {
         updatePresenceIfChanged({
@@ -2456,12 +2572,12 @@ const Whiteboard = ({
           email: user.email,
           isEditing: true
         })
-        
+
         // Clear any existing timeout
         if (editingTimeoutRef.current) {
           clearTimeout(editingTimeoutRef.current)
         }
-        
+
         // Set isEditing to false after 2 seconds of inactivity
         editingTimeoutRef.current = setTimeout(() => {
           if (user) {
@@ -2473,14 +2589,14 @@ const Whiteboard = ({
           }
         }, 2000)
       }
-      
+
       serializeCanvas(canvas, currentSessionIdRef)
       pushSnapshot()
       // Broadcast full canvas to collaborators
       broadcastCanvas()
     }
     onMutationRef.current = onMutation
-    
+
     // Assign unique IDs to new objects for merge conflict resolution
     canvas.on('object:added', (e) => {
       const obj = e.target
@@ -2498,6 +2614,11 @@ const Whiteboard = ({
     canvas.on('object:modified', (e) => {
       // Update text bar position after modification completes
       const obj = e.target
+
+      // Reset dragging flag when object modification completes
+      if (obj && obj._isDragging) {
+        obj._isDragging = false
+      }
       if (obj && (obj.type === 'i-text' || obj.type === 'textbox')) {
         updateTextBarPos(obj)
       }
@@ -2509,17 +2630,17 @@ const Whiteboard = ({
         opt.path.set({ isEraserStroke: true, selectable: false, evented: false })
       onMutation()
     })
-    
+
     // Turn off editing indicator when selection is cleared (with delay)
     canvas.on('selection:cleared', () => {
       if (user && !isEditingTextRef.current && !isDrawingRef.current) {
         console.log('[Whiteboard] selection:cleared - Will clear isEditing after timeout')
-        
+
         // Clear any existing timeout
         if (editingTimeoutRef.current) {
           clearTimeout(editingTimeoutRef.current)
         }
-        
+
         // Set isEditing to false after 2 seconds of inactivity
         editingTimeoutRef.current = setTimeout(() => {
           if (user) {
@@ -2570,13 +2691,13 @@ const Whiteboard = ({
         setTextBarPosition(prev => prev === null ? null : null)
         return
       }
-      
+
       const canvasEl = canvas.upperCanvasEl || canvas.lowerCanvasEl
       const canvasRect = canvasEl
         ? canvasEl.getBoundingClientRect()
         : container.getBoundingClientRect()
       const br = obj.getBoundingRect()
-      
+
       setTextBarPosition(prev => {
         const left = canvasRect.left + br.left
         const top = canvasRect.top + br.top
@@ -2610,6 +2731,17 @@ const Whiteboard = ({
       syncTextBar(o)
       updateTextBarPos(o)
       highlightLines(e.selected || [])
+
+      // Bring selected objects to front
+      if (e.selected && e.selected.length > 0) {
+        e.selected.forEach(obj => {
+          if (obj && !obj.isFrame) { // Don't bring frames to front
+            canvas.bringToFront(obj)
+          }
+        })
+        canvas.requestRenderAll()
+      }
+
       // Publish all selected IDs to other users
       if (user) {
         const ids = (e.selected || []).map(obj => obj.id).filter(Boolean)
@@ -2622,6 +2754,17 @@ const Whiteboard = ({
       syncTextBar(o)
       updateTextBarPos(o)
       highlightLines(e.selected || [])
+
+      // Bring selected objects to front
+      if (e.selected && e.selected.length > 0) {
+        e.selected.forEach(obj => {
+          if (obj && !obj.isFrame) { // Don't bring frames to front
+            canvas.bringToFront(obj)
+          }
+        })
+        canvas.requestRenderAll()
+      }
+
       // Publish all selected IDs to other users
       if (user) {
         const allSelected = canvas.getActiveObject()?.type === 'activeSelection'
@@ -2645,7 +2788,7 @@ const Whiteboard = ({
       console.log('[Whiteboard] Text editing started - pausing database sync')
       isEditingTextRef.current = true
       lastLocalChangeRef.current = Date.now()
-      
+
       // Update presence to show user is editing
       if (user) {
         updatePresenceIfChanged({
@@ -2659,14 +2802,14 @@ const Whiteboard = ({
       console.log('[Whiteboard] Text editing finished - resuming database sync')
       isEditingTextRef.current = false
       lastLocalChangeRef.current = Date.now()
-      
+
       // Update presence to show user stopped editing (with delay)
       if (user) {
         // Clear any existing timeout
         if (editingTimeoutRef.current) {
           clearTimeout(editingTimeoutRef.current)
         }
-        
+
         // Set isEditing to false after 1 second (shorter for text since it's explicit)
         editingTimeoutRef.current = setTimeout(() => {
           if (user) {
@@ -2684,7 +2827,7 @@ const Whiteboard = ({
     canvas.on('object:moving', (e) => {
       // Track movement to prevent database polling during drag
       lastLocalChangeRef.current = Date.now()
-      
+
       // Update presence to show user is editing
       if (user && !isEditingTextRef.current) {
         console.log('[Whiteboard] object:moving - Setting isEditing to TRUE')
@@ -2693,12 +2836,12 @@ const Whiteboard = ({
           email: user.email,
           isEditing: true
         })
-        
+
         // Clear any existing timeout
         if (editingTimeoutRef.current) {
           clearTimeout(editingTimeoutRef.current)
         }
-        
+
         // Set isEditing to false after 2 seconds of inactivity
         editingTimeoutRef.current = setTimeout(() => {
           if (user) {
@@ -2710,8 +2853,15 @@ const Whiteboard = ({
           }
         }, 2000)
       }
-      
+
       const obj = e.target
+
+      // Bring object to front when starting to drag (only once per drag operation)
+      if (obj && !obj._isDragging) {
+        obj._isDragging = true
+        canvas.bringToFront(obj)
+        canvas.requestRenderAll()
+      }
       if (obj && (obj.type === 'i-text' || obj.type === 'textbox')) {
         // Use requestAnimationFrame for smooth position updates during drag
         requestAnimationFrame(() => {
@@ -2747,7 +2897,7 @@ const Whiteboard = ({
     canvas.on('object:scaling', (e) => {
       // Track scaling to prevent database polling during scale
       lastLocalChangeRef.current = Date.now()
-      
+
       // Update presence to show user is editing
       if (user && !isEditingTextRef.current) {
         console.log('[Whiteboard] object:scaling - Setting isEditing to TRUE')
@@ -2756,12 +2906,12 @@ const Whiteboard = ({
           email: user.email,
           isEditing: true
         })
-        
+
         // Clear any existing timeout
         if (editingTimeoutRef.current) {
           clearTimeout(editingTimeoutRef.current)
         }
-        
+
         // Set isEditing to false after 2 seconds of inactivity
         editingTimeoutRef.current = setTimeout(() => {
           if (user) {
@@ -2773,7 +2923,7 @@ const Whiteboard = ({
           }
         }, 2000)
       }
-      
+
       const obj = e.target
       if (obj && (obj.type === 'i-text' || obj.type === 'textbox')) {
         updateTextBarPos(obj)
@@ -2782,7 +2932,7 @@ const Whiteboard = ({
     canvas.on('object:rotating', (e) => {
       // Track rotation
       lastLocalChangeRef.current = Date.now()
-      
+
       // Update presence to show user is editing
       if (user && !isEditingTextRef.current) {
         console.log('[Whiteboard] object:rotating - Setting isEditing to TRUE')
@@ -2791,12 +2941,12 @@ const Whiteboard = ({
           email: user.email,
           isEditing: true
         })
-        
+
         // Clear any existing timeout
         if (editingTimeoutRef.current) {
           clearTimeout(editingTimeoutRef.current)
         }
-        
+
         // Set isEditing to false after 2 seconds of inactivity
         editingTimeoutRef.current = setTimeout(() => {
           if (user) {
@@ -2808,13 +2958,13 @@ const Whiteboard = ({
           }
         }, 2000)
       }
-      
+
       const obj = e.target
       if (obj && (obj.type === 'i-text' || obj.type === 'textbox')) {
         updateTextBarPos(obj)
       }
     })
-    
+
     // Ensure snapshots are created after object transformations complete
     // This handles cases where object:modified might not fire automatically
     let transformCompleteTimer = null
@@ -2952,7 +3102,7 @@ const Whiteboard = ({
           headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
           body: JSON.stringify({ canvasJson: json, background }),
           keepalive: true,
-        }).catch(() => {})
+        }).catch(() => { })
       }
       disconnectRealtime()
     }
@@ -2976,9 +3126,125 @@ const Whiteboard = ({
       if (editingTimeoutRef.current) {
         clearTimeout(editingTimeoutRef.current)
       }
+
+      // Clean up all animations before disposing canvas
+      canvas.getObjects().forEach(obj => {
+        if (obj.animationInterval) {
+          clearInterval(obj.animationInterval)
+          obj.animationInterval = null
+        }
+      })
+
       canvas.dispose()
     }
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Animation functions ───────────────────────────────────────────────────
+  const applyAnimation = useCallback((obj, animationType, duration = 1000) => {
+    if (!obj) return
+
+    const canvas = fabricRef.current
+    if (!canvas) return
+
+    // Store animation properties on the object
+    obj.animation = animationType
+    obj.animationDuration = duration
+
+    // Stop any existing animation
+    if (obj.animationInterval) {
+      clearInterval(obj.animationInterval)
+      obj.animationInterval = null
+    }
+
+    if (animationType === 'none') {
+      obj.set({ opacity: 1, angle: obj.originalAngle || 0, scaleX: obj.originalScaleX || 1, scaleY: obj.originalScaleY || 1 })
+      canvas.renderAll()
+      return
+    }
+
+    // Store original values
+    if (!obj.originalOpacity) obj.originalOpacity = obj.opacity || 1
+    if (!obj.originalAngle) obj.originalAngle = obj.angle || 0
+    if (!obj.originalScaleX) obj.originalScaleX = obj.scaleX || 1
+    if (!obj.originalScaleY) obj.originalScaleY = obj.scaleY || 1
+    if (!obj.originalLeft) obj.originalLeft = obj.left
+    if (!obj.originalTop) obj.originalTop = obj.top
+
+    const startTime = Date.now()
+
+    const animate = () => {
+      const elapsed = Date.now() - startTime
+      const progress = (elapsed % duration) / duration
+
+      switch (animationType) {
+        case 'fade':
+          obj.set({ opacity: 0.3 + 0.7 * Math.abs(Math.sin(progress * Math.PI * 2)) })
+          break
+        case 'pulse':
+          const scale = 1 + 0.1 * Math.sin(progress * Math.PI * 2)
+          obj.set({ scaleX: obj.originalScaleX * scale, scaleY: obj.originalScaleY * scale })
+          break
+        case 'bounce':
+          const bounce = Math.abs(Math.sin(progress * Math.PI * 4)) * 20
+          obj.set({ top: obj.originalTop - bounce })
+          break
+        case 'rotate':
+          obj.set({ angle: progress * 360 })
+          break
+        case 'slide':
+          const slide = Math.sin(progress * Math.PI * 2) * 30
+          obj.set({ left: obj.originalLeft + slide })
+          break
+        case 'shake':
+          const shake = Math.sin(progress * Math.PI * 20) * 5
+          obj.set({ left: obj.originalLeft + shake })
+          break
+      }
+
+      obj.setCoords()
+      canvas.renderAll()
+    }
+
+    // Run animation at 60fps
+    obj.animationInterval = setInterval(animate, 1000 / 60)
+  }, [])
+
+  const stopAnimation = useCallback((obj) => {
+    if (!obj) return
+
+    if (obj.animationInterval) {
+      clearInterval(obj.animationInterval)
+      obj.animationInterval = null
+    }
+
+    // Restore original values
+    if (obj.originalOpacity !== undefined) obj.set({ opacity: obj.originalOpacity })
+    if (obj.originalAngle !== undefined) obj.set({ angle: obj.originalAngle })
+    if (obj.originalScaleX !== undefined) obj.set({ scaleX: obj.originalScaleX })
+    if (obj.originalScaleY !== undefined) obj.set({ scaleY: obj.originalScaleY })
+    if (obj.originalLeft !== undefined) obj.set({ left: obj.originalLeft })
+    if (obj.originalTop !== undefined) obj.set({ top: obj.originalTop })
+
+    obj.animation = 'none'
+    obj.setCoords()
+
+    const canvas = fabricRef.current
+    if (canvas) canvas.renderAll()
+  }, [])
+
+  // ── Restore animations after canvas loads ────────────────────────────────
+  useEffect(() => {
+    const canvas = fabricRef.current
+    if (!canvas || !isCanvasLoaded) return
+
+    // Restore animations for objects that were saved with animations
+    canvas.getObjects().forEach(obj => {
+      if (obj._needsAnimationRestore && obj.animation && obj.animation !== 'none') {
+        applyAnimation(obj, obj.animation, obj.animationDuration || 1000)
+        obj._needsAnimationRestore = false
+      }
+    })
+  }, [isCanvasLoaded, applyAnimation])
 
   // ── Context menu items ────────────────────────────────────────────────────
   const ctxItems = useCallback((target, selectedObjects) => {
@@ -3053,10 +3319,17 @@ const Whiteboard = ({
     if (items.length > 0) items.push({ divider: true })
 
     items.push(
-      { label: 'Bring to Front', icon: 'front',    action: () => reorderAndSnap(() => c.bringToFront(target)) },
-      { label: 'Bring Forward',  icon: 'forward',  action: () => reorderAndSnap(() => c.bringForward(target)) },
-      { label: 'Send Backward',  icon: 'backward', action: () => reorderAndSnap(() => c.sendBackwards(target)) },
-      { label: 'Send to Back',   icon: 'back',     action: () => reorderAndSnap(() => c.sendToBack(target)) },
+      { label: 'Bring to Front', icon: 'front', action: () => reorderAndSnap(() => c.bringToFront(target)) },
+      { label: 'Bring Forward', icon: 'forward', action: () => reorderAndSnap(() => c.bringForward(target)) },
+      { label: 'Send Backward', icon: 'backward', action: () => reorderAndSnap(() => c.sendBackwards(target)) },
+      { label: 'Send to Back', icon: 'back', action: () => reorderAndSnap(() => c.sendToBack(target)) },
+      { divider: true },
+      {
+        label: 'Add Animation', icon: 'animate',
+        action: () => {
+          setAnimationMenu({ target, x: contextMenu.clientX, y: contextMenu.clientY })
+        }
+      },
       { divider: true },
       {
         label: 'Duplicate', icon: 'copy',
@@ -3092,7 +3365,7 @@ const Whiteboard = ({
     )
 
     return items
-  }, [pushSnapshot])
+  }, [pushSnapshot, applyAnimation, stopAnimation, contextMenu])
 
   useEffect(() => {
     const canvas = fabricRef.current
@@ -3226,7 +3499,7 @@ const Whiteboard = ({
 
       const currentTool = toolRef.current
       if (currentTool === 'pan') return
-      
+
       // Update presence to show user is editing
       if (user && currentTool !== 'select') {
         console.log('[Whiteboard] onMouseDown - Setting isEditing to TRUE for tool:', currentTool)
@@ -3235,12 +3508,12 @@ const Whiteboard = ({
           email: user.email,
           isEditing: true
         })
-        
+
         // Clear any existing timeout
         if (editingTimeoutRef.current) {
           clearTimeout(editingTimeoutRef.current)
         }
-        
+
         // Set isEditing to false after 2 seconds of inactivity
         editingTimeoutRef.current = setTimeout(() => {
           if (user) {
@@ -3291,13 +3564,14 @@ const Whiteboard = ({
       let shape = null
       switch (currentTool) {
         case 'line':
+          // Create line with left/top origin for easier coordinate handling during drawing
           shape = new fabric.Line([ptr.x, ptr.y, ptr.x, ptr.y], {
             stroke: c, strokeWidth: sw, selectable: false, evented: false,
-            strokeLineCap: 'round', objectCaching: true, padding: 10,
+            strokeLineCap: 'round', objectCaching: false, padding: 10,
             perPixelTargetFind: true, hasBorders: false, hasControls: false,
             lockScalingX: true, lockScalingY: true, lockRotation: true,
-            originX: 'center', originY: 'center',
           })
+          // Don't set origin - let Fabric use its default
           break
         case 'rectangle':
           shape = new fabric.Rect({ ...base, left: ptr.x, top: ptr.y, width: 0, height: 0, rx: 2, ry: 2 })
@@ -3341,13 +3615,13 @@ const Whiteboard = ({
           t.isPlaceholder = true
           t.placeholderText = PLACEHOLDER
           t.on('editing:entered', function () { canvas.renderAll() })
-          t.on('editing:exited', function () { 
+          t.on('editing:exited', function () {
             this.isPlaceholder = (this.text.trim() === '')
             canvas.renderAll()
             // Fire object:modified to trigger save and broadcast
             canvas.fire('object:modified', { target: this })
           })
-          t.on('changed', function () { 
+          t.on('changed', function () {
             this.isPlaceholder = (this.text.trim() === '')
             canvas.renderAll()
             // Update text bar position as text grows
@@ -3423,13 +3697,13 @@ const Whiteboard = ({
             }
           })
           txt.on('editing:entered', function () { canvas.renderAll() })
-          txt.on('editing:exited', function () { 
+          txt.on('editing:exited', function () {
             this.isPlaceholder = (this.text.trim() === '')
             canvas.renderAll()
             // Fire object:modified to trigger save and broadcast
             canvas.fire('object:modified', { target: this })
           })
-          txt.on('changed', function () { 
+          txt.on('changed', function () {
             this.isPlaceholder = (this.text.trim() === '')
             canvas.renderAll()
             // Update text bar position as text grows (for sticky notes)
@@ -3486,7 +3760,10 @@ const Whiteboard = ({
       }
 
       switch (currentTool) {
-        case 'line': s.set({ x2: ptr.x, y2: ptr.y }); break
+        case 'line':
+          // With originX:'left', originY:'top', just update x2/y2
+          s.set({ x2: ptr.x, y2: ptr.y })
+          break
         case 'rectangle': case 'triangle': {
           const w = ptr.x - sp.x, h = ptr.y - sp.y
           s.set({ width: Math.abs(w), height: Math.abs(h), left: w > 0 ? sp.x : ptr.x, top: h > 0 ? sp.y : ptr.y })
@@ -3514,7 +3791,7 @@ const Whiteboard = ({
 
     const onMouseUp = (opt) => {
       if (toolRef.current === 'pan') return
-      
+
       // Don't immediately set isEditing to false - let the timeout handle it
       // This allows the "editing" indicator to persist for a moment after each action
       // The timeout in onMouseDown/onMutation will clear it after 2 seconds of inactivity
@@ -3525,11 +3802,46 @@ const Whiteboard = ({
           obj.set({ selectable: true, evented: true, objectCaching: true }); obj.setCoords()
           canvas.sendToBack(obj)
         } else if (obj.type === 'line') {
+          // Fabric.js creates lines with left/top at the top-left of the bounding box
+          // and x1,y1,x2,y2 as the actual line coordinates
+          // We need to convert to center origin for proper control handling
+
+          // When line is created with originX:'left', originY:'top',
+          // x1, y1, x2, y2 are the absolute coordinates we passed in
+          const absX1 = obj.x1
+          const absY1 = obj.y1
+          const absX2 = obj.x2
+          const absY2 = obj.y2
+
+          // Calculate center point
+          const centerX = (absX1 + absX2) / 2
+          const centerY = (absY1 + absY2) / 2
+
+          // Set coordinates first
           obj.set({
-            selectable: true, evented: true, objectCaching: true,
-            perPixelTargetFind: true, hasBorders: false,
-            lockScalingX: true, lockScalingY: true, lockRotation: true,
+            x1: absX1 - centerX,
+            y1: absY1 - centerY,
+            x2: absX2 - centerX,
+            y2: absY2 - centerY
           })
+
+          // Set center origin and explicitly set left/top to override Fabric's automatic bounding-box reset
+          obj.set({
+            originX: 'center',
+            originY: 'center',
+            left: centerX,
+            top: centerY,
+            selectable: true,
+            evented: true,
+            objectCaching: false,
+            perPixelTargetFind: true,
+            hasBorders: false,
+            lockScalingX: true,
+            lockScalingY: true,
+            lockRotation: true,
+          })
+
+          // Apply custom controls for line endpoints
           applyLineControls(obj)
           obj.setCoords()
         } else {
@@ -3665,6 +3977,111 @@ const Whiteboard = ({
           items={ctxItems(contextMenu.target, contextMenu.selectedObjects)}
           onClose={() => setContextMenu(null)}
         />
+      )}
+
+      {animationMenu && (
+        <div
+          className="wb-ctx-menu"
+          style={{
+            position: 'fixed',
+            left: Math.min(animationMenu.x, window.innerWidth - 200),
+            top: Math.min(animationMenu.y, window.innerHeight - 350),
+            zIndex: 301,
+          }}
+        >
+          <button
+            className="wb-ctx-item"
+            onClick={() => {
+              applyAnimation(animationMenu.target, 'fade', 1500)
+              setAnimationMenu(null)
+              setContextMenu(null)
+            }}
+          >
+            <svg className="wb-ctx-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" opacity="0.3" />
+            </svg>
+            <span>Fade</span>
+          </button>
+          <button
+            className="wb-ctx-item"
+            onClick={() => {
+              applyAnimation(animationMenu.target, 'pulse', 1000)
+              setAnimationMenu(null)
+              setContextMenu(null)
+            }}
+          >
+            <svg className="wb-ctx-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="4" />
+            </svg>
+            <span>Pulse</span>
+          </button>
+          <button
+            className="wb-ctx-item"
+            onClick={() => {
+              applyAnimation(animationMenu.target, 'bounce', 1200)
+              setAnimationMenu(null)
+              setContextMenu(null)
+            }}
+          >
+            <svg className="wb-ctx-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2v4m0 4v4m0 4v4" /><circle cx="12" cy="20" r="2" />
+            </svg>
+            <span>Bounce</span>
+          </button>
+          <button
+            className="wb-ctx-item"
+            onClick={() => {
+              applyAnimation(animationMenu.target, 'rotate', 2000)
+              setAnimationMenu(null)
+              setContextMenu(null)
+            }}
+          >
+            <svg className="wb-ctx-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2" />
+            </svg>
+            <span>Rotate</span>
+          </button>
+          <button
+            className="wb-ctx-item"
+            onClick={() => {
+              applyAnimation(animationMenu.target, 'slide', 1500)
+              setAnimationMenu(null)
+              setContextMenu(null)
+            }}
+          >
+            <svg className="wb-ctx-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 12h14M5 12l4-4m-4 4l4 4" />
+            </svg>
+            <span>Slide</span>
+          </button>
+          <button
+            className="wb-ctx-item"
+            onClick={() => {
+              applyAnimation(animationMenu.target, 'shake', 800)
+              setAnimationMenu(null)
+              setContextMenu(null)
+            }}
+          >
+            <svg className="wb-ctx-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M8 12h.01M12 12h.01M16 12h.01" />
+            </svg>
+            <span>Shake</span>
+          </button>
+          <div className="wb-ctx-divider" />
+          <button
+            className="wb-ctx-item"
+            onClick={() => {
+              stopAnimation(animationMenu.target)
+              setAnimationMenu(null)
+              setContextMenu(null)
+            }}
+          >
+            <svg className="wb-ctx-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="6" y="6" width="12" height="12" />
+            </svg>
+            <span>Stop Animation</span>
+          </button>
+        </div>
       )}
     </div>
   )
