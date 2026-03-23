@@ -225,6 +225,21 @@
 }
 .frame-label { font-size:12px; font-weight:500; line-height:1; }
 
+/* preview button */
+.preview-btn {
+  width: auto; padding: 0 12px; gap: 6px;
+  border: 1.5px solid var(--tb-border);
+  border-radius: var(--tb-radius-pill);
+  height: 34px; color: var(--tb-text-muted);
+  transition:
+    border-color var(--tb-duration) var(--tb-ease),
+    background   var(--tb-duration) var(--tb-ease),
+    color        var(--tb-duration) var(--tb-ease),
+    box-shadow   var(--tb-duration) var(--tb-ease);
+}
+.preview-btn:hover { border-color:var(--tb-accent); color:var(--tb-accent); background:var(--tb-accent-bg); transform:translateY(-1px); }
+.preview-label { font-size:12px; font-weight:500; line-height:1; }
+
 /* laser button */
 .laser-btn {
   width: auto; padding: 0 12px; gap: 6px;
@@ -348,8 +363,8 @@
 
 /* 1200px: collapse right-side pill buttons to icon-only, shrink slider */
 @media (max-width: 1200px) {
-  .laser-label, .export-label, .frame-label { display: none; }
-  .export-btn, .laser-btn, .frame-btn { width: 34px; padding: 0; justify-content: center; border-radius: var(--tb-radius-md); }
+  .laser-label, .export-label, .frame-label, .preview-label { display: none; }
+  .export-btn, .laser-btn, .frame-btn, .preview-btn { width: 34px; padding: 0; justify-content: center; border-radius: var(--tb-radius-md); }
   .toolbar-section { padding: 0 4px; }
   .stroke-width-control input[type="range"] { width: 40px; }
 }
@@ -372,7 +387,9 @@
   .color-display { width: 24px; height: 24px; }
   .tool-btn.zoom-label { width: 34px; padding: 0 3px; font-size: 11px; }
   .toolbar-sep { margin: 0 1px; }
-  .export-btn { display: none; }
+  /* Keep export button visible but icon-only */
+  .export-btn { width: 32px; padding: 0; justify-content: center; border-radius: var(--tb-radius-md); }
+  .export-label { display: none; }
 }
 
 /* 960px: hide zoom label, hide stroke number, hide stroke control */
@@ -387,11 +404,11 @@
   .toolbar-left { margin-right: 4px; }
 }
 
-/* 768px: mobile — scrollable tool row, hide non-essential controls */
+/* 768px: mobile — scrollable tool row, keep all controls visible */
 @media (max-width: 768px) {
   .toolbar {
     padding: 0 6px;
-    gap: 0;
+    gap: 4px;
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: thin;
@@ -399,16 +416,16 @@
     -webkit-overflow-scrolling: touch;
     flex-wrap: nowrap;
   }
-  .toolbar::-webkit-scrollbar { height: 3px; display: block; }
+  .toolbar::-webkit-scrollbar { height: 4px; display: block; }
   .toolbar::-webkit-scrollbar-track { background: transparent; }
   .toolbar::-webkit-scrollbar-thumb { background: var(--tb-divider); border-radius: 2px; }
 
   .toolbar-left { margin-right: 4px; flex-shrink: 0; }
-  .toolbar-right { margin-left: 4px; flex-shrink: 0; }
+  .toolbar-right { margin-left: auto; flex-shrink: 0; }
 
   .toolbar-section {
     padding: 0 2px;
-    gap: 1px;
+    gap: 2px;
     flex-shrink: 0;
   }
   .toolbar-section + .toolbar-section::before { display: none; }
@@ -421,10 +438,18 @@
   .fill-toggle-btn { display: none; }
   .tool-btn.zoom-label { display: none; }
 
-  /* Hide frame, laser, export from right side — too wide */
-  .frame-btn, .laser-btn, .export-btn { display: none; }
-  .toolbar-sep { display: none; }
-  .toolbar-right { display: none; }
+  /* Keep frame, preview, laser, export visible but icon-only */
+  .frame-btn, .preview-btn, .laser-btn, .export-btn { 
+    width: 34px; 
+    height: 34px;
+    padding: 0; 
+    justify-content: center; 
+    border-radius: var(--tb-radius-md);
+    flex-shrink: 0;
+  }
+  .frame-label, .preview-label, .laser-label, .export-label { display: none; }
+
+  .toolbar-sep { margin: 0 2px; flex-shrink: 0; }
 
   /* Color swatch stays but smaller */
   .color-display { width: 26px; height: 26px; }

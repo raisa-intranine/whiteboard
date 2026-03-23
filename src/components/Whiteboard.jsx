@@ -2299,6 +2299,7 @@ const Whiteboard = ({
     window.__wbAddImage = addImage
     window.__wbDelete = deleteSelected
     window.__wbLoadSession = reloadSession
+
     return () => {
       delete window.__wbUndo; delete window.__wbRedo
       delete window.__wbClear; delete window.__wbAddImage; delete window.__wbDelete
@@ -3232,6 +3233,96 @@ const Whiteboard = ({
     if (canvas) canvas.renderAll()
   }, [])
 
+  const handlePreview = useCallback(() => {
+    const canvas = fabricRef.current
+    if (!canvas || historyRef.current.length === 0) return
+
+    const snapshots = historyRef.current.slice(0, historyIdxRef.current + 1)
+    if (snapshots.length === 0) return
+
+    isMutingRef.current = true
+    realtimeIgnoreRef.current = true
+    isUndoRedoInProgressRef.current = true
+
+    // Set initial preview state
+    canvas.getObjects().slice().forEach(obj => {
+      if (obj.animationInterval) {
+        clearInterval(obj.animationInterval)
+        obj.animationInterval = null
+      }
+      if (obj.stickyText) canvas.remove(obj.stickyText)
+      if (obj.stickyRect) canvas.remove(obj.stickyRect)
+      canvas.remove(obj)
+    })
+    canvas.discardActiveObject()
+    canvas.renderAll()
+
+    let i = 0
+    const playNext = () => {
+      if (i >= snapshots.length) {
+        isMutingRef.current = false
+        realtimeIgnoreRef.current = false
+        isUndoRedoInProgressRef.current = false
+        canvas.getObjects().forEach(o => {
+          if (!o.isEraserStroke && !o.isFrame) {
+            o.selectable = true
+            o.evented = true
+          }
+          if (o._needsAnimationRestore && o.animation && o.animation !== 'none') {
+            applyAnimation(o, o.animation, o.animationDuration || 1000)
+            o._needsAnimationRestore = false
+          }
+        })
+        canvas.renderAll()
+        return
+      }
+
+      const snapshot = snapshots[i]
+      const json = snapshot?.canvasJson ? snapshot.canvasJson : snapshot
+
+      if (!json || !json.objects) {
+        i++
+        playNext()
+        return
+      }
+
+      // Clear any running animations before wiping the canvas
+      canvas.getObjects().forEach(obj => {
+        if (obj.animationInterval) {
+          clearInterval(obj.animationInterval)
+          obj.animationInterval = null
+        }
+      })
+
+      loadJsonIntoCanvas(canvas, json, isMutingRef, () => {
+        canvas.getObjects().forEach(o => {
+          o.selectable = false
+          o.evented = false
+          
+          if (o._needsAnimationRestore && o.animation && o.animation !== 'none') {
+            applyAnimation(o, o.animation, o.animationDuration || 1000)
+            o._needsAnimationRestore = false
+          }
+        })
+        canvas.discardActiveObject()
+        canvas.renderAll()
+
+        i++
+        setTimeout(playNext, 600)
+      })
+    }
+
+    playNext()
+  }, [applyAnimation])
+
+  // Map to window inside a tight useEffect to ensure preview always invokes latest instance
+  useEffect(() => {
+    window.__wbPreview = handlePreview
+    return () => {
+      delete window.__wbPreview
+    }
+  }, [handlePreview])
+
   // ── Restore animations after canvas loads ────────────────────────────────
   useEffect(() => {
     const canvas = fabricRef.current
@@ -3957,7 +4048,13 @@ const Whiteboard = ({
       className={`whiteboard-container ${tool ? `tool-${tool}` : ''} ${theme === 'dark' ? 'dark' : ''}`}
       style={{ touchAction: tool === 'pan' ? 'none' : 'auto', userSelect: 'none' }}
     >
-      <canvas ref={canvasRef} />
+      <canvas 
+        ref={canvasRef} 
+        style={{ 
+          opacity: isCanvasLoaded ? 1 : 0,
+          transition: 'opacity 0.2s ease-in-out'
+        }} 
+      />
       <LaserPointer active={tool === 'laser'} containerRef={containerRef} />
       <PresenceIndicators containerRef={containerRef} fabricRef={fabricRef} />
       <ShapeProperties canvas={fabricRef.current} selectedObject={selectedObject} />
@@ -3993,6 +4090,7 @@ const Whiteboard = ({
             className="wb-ctx-item"
             onClick={() => {
               applyAnimation(animationMenu.target, 'fade', 1500)
+              fabricRef.current?.fire('object:modified', { target: animationMenu.target })
               setAnimationMenu(null)
               setContextMenu(null)
             }}
@@ -4006,6 +4104,7 @@ const Whiteboard = ({
             className="wb-ctx-item"
             onClick={() => {
               applyAnimation(animationMenu.target, 'pulse', 1000)
+              fabricRef.current?.fire('object:modified', { target: animationMenu.target })
               setAnimationMenu(null)
               setContextMenu(null)
             }}
@@ -4019,6 +4118,7 @@ const Whiteboard = ({
             className="wb-ctx-item"
             onClick={() => {
               applyAnimation(animationMenu.target, 'bounce', 1200)
+              fabricRef.current?.fire('object:modified', { target: animationMenu.target })
               setAnimationMenu(null)
               setContextMenu(null)
             }}
@@ -4032,6 +4132,7 @@ const Whiteboard = ({
             className="wb-ctx-item"
             onClick={() => {
               applyAnimation(animationMenu.target, 'rotate', 2000)
+              fabricRef.current?.fire('object:modified', { target: animationMenu.target })
               setAnimationMenu(null)
               setContextMenu(null)
             }}
@@ -4045,6 +4146,7 @@ const Whiteboard = ({
             className="wb-ctx-item"
             onClick={() => {
               applyAnimation(animationMenu.target, 'slide', 1500)
+              fabricRef.current?.fire('object:modified', { target: animationMenu.target })
               setAnimationMenu(null)
               setContextMenu(null)
             }}
@@ -4058,6 +4160,7 @@ const Whiteboard = ({
             className="wb-ctx-item"
             onClick={() => {
               applyAnimation(animationMenu.target, 'shake', 800)
+              fabricRef.current?.fire('object:modified', { target: animationMenu.target })
               setAnimationMenu(null)
               setContextMenu(null)
             }}
@@ -4072,6 +4175,7 @@ const Whiteboard = ({
             className="wb-ctx-item"
             onClick={() => {
               stopAnimation(animationMenu.target)
+              fabricRef.current?.fire('object:modified', { target: animationMenu.target })
               setAnimationMenu(null)
               setContextMenu(null)
             }}

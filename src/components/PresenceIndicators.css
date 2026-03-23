@@ -135,6 +135,12 @@
   transition: transform 0.1s ease-out;
 }
 
+/* Remote selection overlay canvas */
+.remote-selection-overlay {
+  background: transparent !important;
+  opacity: 1;
+}
+
 .remote-cursor-pointer {
   width: 0;
   height: 0;

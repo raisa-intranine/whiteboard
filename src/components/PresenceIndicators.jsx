@@ -31,13 +31,29 @@ const PresenceIndicators = ({ containerRef, fabricRef }) => {
     remoteSelectionsRef.current = remoteSelections
   }, [remoteSelections])
 
+  // Initialize overlay canvas with transparent background
+  useEffect(() => {
+    const overlayCanvas = overlayCanvasRef.current
+    if (!overlayCanvas) return
+    
+    // Get context with alpha channel enabled
+    const ctx = overlayCanvas.getContext('2d', { alpha: true })
+    if (ctx) {
+      // Ensure canvas is transparent
+      ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height)
+    }
+  }, [])
+
   // Draw selection highlights on the HTML canvas overlay
   const drawOverlay = useCallback(() => {
     const canvas = fabricRef?.current
     const overlayCanvas = overlayCanvasRef.current
     if (!canvas || !overlayCanvas || !canvas.lowerCanvasEl) return
 
-    const ctx = overlayCanvas.getContext('2d')
+    const ctx = overlayCanvas.getContext('2d', { alpha: true })
+    if (!ctx) return
+    
+    // Clear with transparent background
     ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height)
 
     const selections = remoteSelectionsRef.current
@@ -108,6 +124,11 @@ const PresenceIndicators = ({ containerRef, fabricRef }) => {
     if (overlayCanvas.width !== el.offsetWidth || overlayCanvas.height !== el.offsetHeight) {
       overlayCanvas.width = el.offsetWidth
       overlayCanvas.height = el.offsetHeight
+      // Make canvas transparent by clearing with transparent pixels
+      const ctx = overlayCanvas.getContext('2d', { alpha: true })
+      if (ctx) {
+        ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height)
+      }
     }
   }, [fabricRef])
 
@@ -251,6 +272,7 @@ const PresenceIndicators = ({ containerRef, fabricRef }) => {
           left: 0,
           pointerEvents: 'none',
           zIndex: 50,
+          background: 'transparent',
         }}
       />
 
