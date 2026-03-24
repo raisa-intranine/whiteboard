@@ -2445,60 +2445,8 @@ const Whiteboard = ({
       console.log('[Whiteboard] After load - objects on canvas:', objects.length, 'Is shared board:', isSharedBoard)
 
       if (bid && objects.length > 0 && isSharedBoard) {
-        console.log('[Whiteboard] Auto-centering viewport on content for shared board')
-        // Calculate bounding box of all objects
-        const allCoords = []
-        objects.forEach(obj => {
-          const bounds = obj.getBoundingRect()
-          allCoords.push({ x: bounds.left, y: bounds.top })
-          allCoords.push({ x: bounds.left + bounds.width, y: bounds.top + bounds.height })
-        })
-
-        if (allCoords.length > 0) {
-          const minX = Math.min(...allCoords.map(c => c.x))
-          const maxX = Math.max(...allCoords.map(c => c.x))
-          const minY = Math.min(...allCoords.map(c => c.y))
-          const maxY = Math.max(...allCoords.map(c => c.y))
-
-          console.log('[Whiteboard] Content bounds:', { minX, maxX, minY, maxY })
-
-          const contentWidth = Math.max(maxX - minX, 1)
-          const contentHeight = Math.max(maxY - minY, 1)
-          const contentCenterX = minX + contentWidth / 2
-          const contentCenterY = minY + contentHeight / 2
-
-          const canvasWidth = canvas.getWidth()
-          const canvasHeight = canvas.getHeight()
-
-          console.log('[Whiteboard] Content size:', contentWidth, 'x', contentHeight, 'Canvas:', canvasWidth, 'x', canvasHeight)
-
-          // Calculate zoom to fit content with some padding
-          // Constrain zoom between 0.1 (10%) and 2 (200%)
-          let zoom = Math.min(
-            (canvasWidth * 0.8) / contentWidth,
-            (canvasHeight * 0.8) / contentHeight
-          )
-          zoom = Math.max(0.1, Math.min(2, zoom)) // Clamp between 0.1 and 2
-
-          console.log('[Whiteboard] Calculated zoom:', zoom)
-
-          // Center the viewport on the content
-          const vpt = canvas.viewportTransform
-          vpt[0] = zoom
-          vpt[3] = zoom
-          vpt[4] = canvasWidth / 2 - contentCenterX * zoom
-          vpt[5] = canvasHeight / 2 - contentCenterY * zoom
-
-          console.log('[Whiteboard] Setting viewport transform:', vpt)
-
-          canvas.setViewportTransform(vpt)
-          canvas.requestRenderAll()
-
-          console.log('[Whiteboard] Auto-centered viewport. Zoom:', zoom, 'Center:', contentCenterX, contentCenterY)
-        } else {
-          console.warn('[Whiteboard] No coordinates found for auto-centering')
-          canvas.requestRenderAll()
-        }
+        console.log('[Whiteboard] Shared board, leaving viewport as is')
+        canvas.requestRenderAll()
       } else if (!isSharedBoard) {
         // For own boards (not shared), viewport was already restored from localStorage above
         console.log('[Whiteboard] Using own board viewport')
@@ -3244,6 +3192,8 @@ const Whiteboard = ({
     realtimeIgnoreRef.current = true
     isUndoRedoInProgressRef.current = true
 
+    document.body.classList.add('preview-mode')
+
     // Set initial preview state
     canvas.getObjects().slice().forEach(obj => {
       if (obj.animationInterval) {
@@ -3260,6 +3210,7 @@ const Whiteboard = ({
     let i = 0
     const playNext = () => {
       if (i >= snapshots.length) {
+        document.body.classList.remove('preview-mode')
         isMutingRef.current = false
         realtimeIgnoreRef.current = false
         isUndoRedoInProgressRef.current = false

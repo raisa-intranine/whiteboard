@@ -476,3 +476,8 @@
   .color-swatch { width: 32px; height: 32px; }
   .wb-ctx-item { padding: 10px 12px; font-size: 13px; }
 }
+
+/* Hide toolbar during preview */
+body.preview-mode .toolbar {
+  display: none !important;
+}
