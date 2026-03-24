@@ -1101,6 +1101,10 @@ const Whiteboard = ({
   const historyIdxRef = useRef(-1)
   const isMutingRef = useRef(false)
 
+  const previewStateRef = useRef({ active: false, paused: false, currentIndex: 0, timerId: null, snapshots: [] })
+  const [previewMode, setPreviewMode] = useState({ active: false, paused: false })
+  const playNextRef = useRef(null)
+
   // Update ref when prop changes
   useEffect(() => {
     currentSessionIdRef.current = currentSessionId
@@ -1362,6 +1366,12 @@ const Whiteboard = ({
           if (currentCanvas.lowerCanvasEl) currentCanvas.renderAll()
         })
         isMutingRef.current = false
+        
+        // Clear local history when canvas is cleared remotely
+        historyRef.current = []
+        historyIdxRef.current = -1
+        onHistoryChange?.({ canUndo: false, canRedo: false })
+        
         return
       }
 
@@ -2129,6 +2139,11 @@ const Whiteboard = ({
 
     console.log('[clearCanvas] Clearing canvas and resetting history')
 
+    // Instantly disable undo/redo buttons and clear local history to prevent blinking and race conditions
+    historyRef.current = []
+    historyIdxRef.current = -1
+    onHistoryChange?.({ canUndo: false, canRedo: false })
+
     isMutingRef.current = true
     canvas.getObjects().slice().forEach(obj => {
       if (obj.stickyText) canvas.remove(obj.stickyText)
@@ -2152,13 +2167,9 @@ const Whiteboard = ({
     const json = getSerializedCanvas(canvas)
     const sessionId = currentSessionIdRef.current
     if (boardId && sessionId) {
-      await saveToSessionImmediate(boardId, sessionId, json, canvas.backgroundColor || '#ffffff')
-      console.log('[clearCanvas] Empty canvas saved to database')
+      saveToSessionImmediate(boardId, sessionId, json, canvas.backgroundColor || '#ffffff')
+        .then(() => console.log('[clearCanvas] Empty canvas saved to database'))
     }
-
-    // Reset history AFTER saving to DB
-    historyRef.current = []
-    historyIdxRef.current = -1
 
     // Clear ALL users' history from Firestore (not just current user)
     if (boardId && sessionId) {
@@ -2166,9 +2177,8 @@ const Whiteboard = ({
         .catch(err => console.warn('[clearCanvas] Failed to clear all Firestore history:', err))
     }
 
-    // Create initial empty snapshot after a short delay
-    setTimeout(() => {
-      if (!canvas || !canvas.lowerCanvasEl) return
+    // Create initial empty snapshot
+    if (canvas && canvas.lowerCanvasEl) {
       const emptySnapshot = {
         canvasJson: getSerializedCanvas(canvas),
         userEmail: user?.email || 'anonymous',
@@ -2176,15 +2186,15 @@ const Whiteboard = ({
       }
       historyRef.current = [emptySnapshot]
       historyIdxRef.current = 0
-      onHistoryChange?.({ canUndo: false, canRedo: false })
       console.log('[clearCanvas] Created empty snapshot')
 
       // Save initial empty snapshot to Firestore
-      if (boardId && sessionId && userEmail) {
-        saveUserHistorySnapshot(boardId, sessionId, userEmail, emptySnapshot)
+      if (boardId && sessionId && user?.email) {
+        saveUserHistorySnapshot(boardId, sessionId, user.email, emptySnapshot)
           .catch(err => console.warn('[clearCanvas] Failed to save empty snapshot:', err))
       }
-    }, 150)
+    }
+
   }, [onHistoryChange, user])
 
   const deleteSelected = useCallback(() => {
@@ -3181,6 +3191,66 @@ const Whiteboard = ({
     if (canvas) canvas.renderAll()
   }, [])
 
+  const pausePreview = useCallback(() => {
+    const state = previewStateRef.current
+    if (!state.active) return
+    state.paused = true
+    if (state.timerId) {
+      clearTimeout(state.timerId)
+      state.timerId = null
+    }
+    setPreviewMode(prev => ({ ...prev, paused: true }))
+  }, [])
+
+  const resumePreview = useCallback(() => {
+    const state = previewStateRef.current
+    if (!state.active || !state.paused) return
+    state.paused = false
+    setPreviewMode(prev => ({ ...prev, paused: false }))
+    if (playNextRef.current) {
+      playNextRef.current()
+    }
+  }, [])
+
+  const stopPreview = useCallback(() => {
+    const state = previewStateRef.current
+    if (!state.active) return
+    state.active = false
+    state.paused = false
+    if (state.timerId) {
+      clearTimeout(state.timerId)
+      state.timerId = null
+    }
+    setPreviewMode({ active: false, paused: false })
+
+    document.body.classList.remove('preview-mode')
+    isMutingRef.current = false
+    realtimeIgnoreRef.current = false
+    isUndoRedoInProgressRef.current = false
+
+    const canvas = fabricRef.current
+    if (!canvas) return
+    
+    // Fast-forward to the end (current state)
+    const targetSnapshot = historyRef.current[historyIdxRef.current]
+    if (targetSnapshot) {
+      const json = targetSnapshot.canvasJson || targetSnapshot
+      loadJsonIntoCanvas(canvas, json, isMutingRef, () => {
+        canvas.getObjects().forEach(o => {
+          if (!o.isEraserStroke && !o.isFrame) {
+            o.selectable = true
+            o.evented = true
+          }
+          if (o._needsAnimationRestore && o.animation && o.animation !== 'none') {
+            applyAnimation(o, o.animation, o.animationDuration || 1000)
+            o._needsAnimationRestore = false
+          }
+        })
+        canvas.renderAll()
+      })
+    }
+  }, [applyAnimation])
+
   const handlePreview = useCallback(() => {
     const canvas = fabricRef.current
     if (!canvas || historyRef.current.length === 0) return
@@ -3193,6 +3263,8 @@ const Whiteboard = ({
     isUndoRedoInProgressRef.current = true
 
     document.body.classList.add('preview-mode')
+    setPreviewMode({ active: true, paused: false })
+    previewStateRef.current = { active: true, paused: false, currentIndex: 0, timerId: null, snapshots }
 
     // Set initial preview state
     canvas.getObjects().slice().forEach(obj => {
@@ -3207,32 +3279,20 @@ const Whiteboard = ({
     canvas.discardActiveObject()
     canvas.renderAll()
 
-    let i = 0
     const playNext = () => {
-      if (i >= snapshots.length) {
-        document.body.classList.remove('preview-mode')
-        isMutingRef.current = false
-        realtimeIgnoreRef.current = false
-        isUndoRedoInProgressRef.current = false
-        canvas.getObjects().forEach(o => {
-          if (!o.isEraserStroke && !o.isFrame) {
-            o.selectable = true
-            o.evented = true
-          }
-          if (o._needsAnimationRestore && o.animation && o.animation !== 'none') {
-            applyAnimation(o, o.animation, o.animationDuration || 1000)
-            o._needsAnimationRestore = false
-          }
-        })
-        canvas.renderAll()
+      const state = previewStateRef.current
+      if (!state.active || state.paused) return
+
+      if (state.currentIndex >= state.snapshots.length) {
+        stopPreview()
         return
       }
 
-      const snapshot = snapshots[i]
+      const snapshot = state.snapshots[state.currentIndex]
       const json = snapshot?.canvasJson ? snapshot.canvasJson : snapshot
 
       if (!json || !json.objects) {
-        i++
+        state.currentIndex++
         playNext()
         return
       }
@@ -3246,6 +3306,8 @@ const Whiteboard = ({
       })
 
       loadJsonIntoCanvas(canvas, json, isMutingRef, () => {
+        if (!previewStateRef.current.active) return
+        
         canvas.getObjects().forEach(o => {
           o.selectable = false
           o.evented = false
@@ -3258,13 +3320,16 @@ const Whiteboard = ({
         canvas.discardActiveObject()
         canvas.renderAll()
 
-        i++
-        setTimeout(playNext, 600)
+        previewStateRef.current.currentIndex++
+        if (previewStateRef.current.active && !previewStateRef.current.paused) {
+          previewStateRef.current.timerId = setTimeout(playNext, 600)
+        }
       })
     }
-
+    
+    playNextRef.current = playNext
     playNext()
-  }, [applyAnimation])
+  }, [applyAnimation, stopPreview])
 
   // Map to window inside a tight useEffect to ensure preview always invokes latest instance
   useEffect(() => {
@@ -4016,6 +4081,63 @@ const Whiteboard = ({
           onChange={applyTextFormat}
           position={textBarPosition}
         />
+      )}
+
+      {previewMode.active && (
+        <div className="preview-controls-bar" style={{
+          position: 'fixed',
+          bottom: '24px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          display: 'flex',
+          gap: '12px',
+          background: '#ffffff',
+          padding: '12px 20px',
+          borderRadius: '12px',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
+          zIndex: 9999,
+          alignItems: 'center',
+          border: '1px solid #e5e7eb'
+        }}>
+          <div style={{ fontWeight: 600, fontSize: '14px', color: '#374151', marginRight: '8px' }}>
+            Previewing
+          </div>
+          <button 
+            onClick={previewMode.paused ? resumePreview : pausePreview}
+            style={{ 
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: '40px', height: '40px', cursor: 'pointer', background: '#f3f4f6', 
+              color: '#374151', border: 'none', borderRadius: '8px',
+              transition: 'background 0.2s'
+            }}
+            title={previewMode.paused ? "Play" : "Pause"}
+          >
+            {previewMode.paused ? (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+              </svg>
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="4" width="4" height="16"/>
+                <rect x="14" y="4" width="4" height="16"/>
+              </svg>
+            )}
+          </button>
+          <button 
+            onClick={stopPreview}
+            style={{ 
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: '40px', height: '40px', cursor: 'pointer', background: '#fee2e2', 
+              color: '#dc2626', border: 'none', borderRadius: '8px',
+              transition: 'background 0.2s'
+            }}
+            title="Stop"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="6" width="12" height="12"/>
+            </svg>
+          </button>
+        </div>
       )}
 
       {contextMenu && (
