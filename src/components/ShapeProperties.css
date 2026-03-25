@@ -25,11 +25,11 @@
 
 .shape-properties {
   position: fixed;
-  top: 80px; 
+  top: 140px; 
   right: 16px;
   z-index: 150;
   width: 200px;
-  max-height: calc(100vh - 96px);
+  max-height: calc(100vh - 156px);
   background: var(--sp-bg);
   border: 1px solid var(--sp-border);
   border-radius: var(--sp-radius-lg);
@@ -266,8 +266,8 @@
 @media (max-width: 768px) {
   .shape-properties {
     right: 12px;
-    top: 70px;
-    max-height: calc(100vh - 86px);
+    top: 140px;
+    max-height: calc(100vh - 156px);
     width: 180px;
   }
   .properties-section {
@@ -284,7 +284,7 @@
     right: auto;
     bottom: 12px;
     top: auto;
-    max-height: 55vh;
+    max-height: 50vh;
     width: 170px;
   }
   .properties-section {

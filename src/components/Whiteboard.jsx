@@ -2710,6 +2710,7 @@ const Whiteboard = ({
     canvas.on('selection:updated', (e) => {
       const o = e.selected?.[0]
       setSelectedObject(o && SHAPE_TYPES.includes(o.type) ? o : null)
+      setAnimationMenu(null)
       syncTextBar(o)
       updateTextBarPos(o)
       highlightLines(e.selected || [])
@@ -2737,6 +2738,7 @@ const Whiteboard = ({
       setSelectedObject(null)
       setShowTextBar(false)
       setTextBarPosition(null)
+      setAnimationMenu(null)
       highlightLines([])
       // Clear selection for other users
       if (user) publishSelection(null)
@@ -2944,10 +2946,21 @@ const Whiteboard = ({
       e.stopPropagation()
 
       const target = canvas.findTarget(e, false)
-      if (!target) return
-
       const activeObj = canvas.getActiveObject()
       const activeObjs = canvas.getActiveObjects()
+
+      // If no target clicked but there's an active selection, show menu for the selection
+      if (!target) {
+        if (activeObj) {
+          setContextMenu({
+            clientX: e.clientX,
+            clientY: e.clientY,
+            target: activeObj,
+            selectedObjects: activeObjs.length > 0 ? activeObjs : [activeObj],
+          })
+        }
+        return
+      }
 
       let finalSelected
       const isInsideMultiSelect =
@@ -3431,12 +3444,27 @@ const Whiteboard = ({
       { label: 'Send Backward', icon: 'backward', action: () => reorderAndSnap(() => c.sendBackwards(target)) },
       { label: 'Send to Back', icon: 'back', action: () => reorderAndSnap(() => c.sendToBack(target)) },
       { divider: true },
-      {
+    )
+
+    // Show "Stop Animation" if object has an active animation, otherwise show "Add Animation"
+    if (target.animation && target.animation !== 'none') {
+      items.push({
+        label: 'Stop Animation', icon: 'animate',
+        action: () => {
+          stopAnimation(target)
+          snap()
+        }
+      })
+    } else {
+      items.push({
         label: 'Add Animation', icon: 'animate',
         action: () => {
           setAnimationMenu({ target, x: contextMenu.clientX, y: contextMenu.clientY })
         }
-      },
+      })
+    }
+
+    items.push(
       { divider: true },
       {
         label: 'Duplicate', icon: 'copy',
@@ -4242,21 +4270,6 @@ const Whiteboard = ({
               <path d="M8 12h.01M12 12h.01M16 12h.01" />
             </svg>
             <span>Shake</span>
-          </button>
-          <div className="wb-ctx-divider" />
-          <button
-            className="wb-ctx-item"
-            onClick={() => {
-              stopAnimation(animationMenu.target)
-              fabricRef.current?.fire('object:modified', { target: animationMenu.target })
-              setAnimationMenu(null)
-              setContextMenu(null)
-            }}
-          >
-            <svg className="wb-ctx-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="6" y="6" width="12" height="12" />
-            </svg>
-            <span>Stop Animation</span>
           </button>
         </div>
       )}

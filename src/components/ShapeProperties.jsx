@@ -208,8 +208,19 @@ const ShapeProperties = ({ canvas, selectedObject }) => {
 
   if (!selectedObject || !isVisible) return null
 
+  const handleWheel = (e) => {
+    // Stop the event from reaching the canvas container's wheel handler
+    e.stopPropagation()
+    // Allow default scroll behavior for this element
+    // The canvas container's preventDefault won't affect this
+  }
+
   return (
-    <div className="shape-properties">
+    <div 
+      className="shape-properties"
+      onWheelCapture={handleWheel}
+      onTouchMove={(e) => e.stopPropagation()}
+    >
 
       <div className="sp-header">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
