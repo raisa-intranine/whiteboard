@@ -149,19 +149,30 @@ const MermaidModal = ({ visible, onClose, canvas, theme, mode = 'generate' }) =>
   const [svgContent, setSvgContent] = useState('')
   const [previewZoom, setPreviewZoom] = useState(100)
 
+  const prevVisible = useRef(visible)
+  const prevSelectedType = useRef(selectedType)
+  const prevGenerateType = useRef(generateType)
+
   useEffect(() => {
-    console.log('[MermaidModal] useEffect triggered. visible:', visible, 'mode:', mode, 'selectedType:', selectedType)
+    const opening = visible && !prevVisible.current
+    const tabClickCreate = visible && mode === 'create' && selectedType !== prevSelectedType.current
+    const tabClickGen = visible && mode === 'generate' && generateType !== prevGenerateType.current
     
+    prevVisible.current = visible
+    prevSelectedType.current = selectedType
+    prevGenerateType.current = generateType
+
     if (visible && mode === 'create') {
-      const example = MERMAID_EXAMPLES[selectedType]
-      console.log('[MermaidModal] Setting example code for', selectedType, '- Length:', example?.length)
-      setMermaidCode(example)
-      setError('')
+      if (tabClickCreate || (opening && !mermaidCode)) {
+        setMermaidCode(MERMAID_EXAMPLES[selectedType] || '')
+        setError('')
+      }
     } else if (visible && mode === 'generate') {
-      console.log('[MermaidModal] Generating from canvas')
-      generateMermaidFromCanvas()
+      if (opening || tabClickGen) {
+        generateMermaidFromCanvas()
+      }
     }
-  }, [visible, mode, selectedType, generateType])
+  }, [visible, mode, selectedType, generateType, mermaidCode])
 
   useEffect(() => {
     if (!mermaidCode || !visible || mermaidCode.trim().length < 3) {
@@ -310,37 +321,43 @@ const MermaidModal = ({ visible, onClose, canvas, theme, mode = 'generate' }) =>
       const id = `mermaid-${Date.now()}`
       const { svg } = await mermaid.render(id, mermaidCode)
       
-      // Check if this is a Gantt chart and adjust SVG dimensions
-      const isGantt = mermaidCode.trim().toLowerCase().startsWith('gantt')
-      if (isGantt) {
-        // Parse and modify SVG to make Gantt charts fill the preview area
-        const parser = new DOMParser()
-        const svgDoc = parser.parseFromString(svg, 'image/svg+xml')
-        const svgEl = svgDoc.documentElement
-        
-        // Remove fixed width/height to make it responsive
-        svgEl.removeAttribute('width')
-        svgEl.removeAttribute('height')
-        
-        // Set width to 100% and preserve aspect ratio
-        svgEl.setAttribute('width', '100%')
-        svgEl.setAttribute('height', 'auto')
-        
-        // Ensure viewBox exists for proper scaling
-        if (!svgEl.getAttribute('viewBox')) {
-          const bbox = svgEl.getBBox?.() || { x: 0, y: 0, width: 800, height: 600 }
-          svgEl.setAttribute('viewBox', `${bbox.x} ${bbox.y} ${bbox.width} ${bbox.height}`)
-        }
-        
-        // Add preserveAspectRatio to ensure proper scaling
-        svgEl.setAttribute('preserveAspectRatio', 'xMinYMin meet')
-        
-        const serializer = new XMLSerializer()
-        const modifiedSvg = serializer.serializeToString(svgDoc)
-        setSvgContent(modifiedSvg)
+      // Parse and modify SVG to make it high quality and big for all charts
+      const parser = new DOMParser()
+      const svgDoc = parser.parseFromString(svg, 'image/svg+xml')
+      const svgEl = svgDoc.documentElement
+      
+      let vbWidth = 800, vbHeight = 600;
+      const viewBox = svgEl.getAttribute('viewBox')
+      if (viewBox) {
+        const parts = viewBox.trim().split(/[\s,]+/)
+        vbWidth = parseFloat(parts[2]) || vbWidth
+        vbHeight = parseFloat(parts[3]) || vbHeight
       } else {
-        setSvgContent(svg)
+        const wAttr = svgEl.getAttribute('width')
+        const hAttr = svgEl.getAttribute('height')
+        if (wAttr && hAttr && !wAttr.includes('%') && !hAttr.includes('%')) {
+          vbWidth = parseFloat(wAttr)
+          vbHeight = parseFloat(hAttr)
+          svgEl.setAttribute('viewBox', `0 0 ${vbWidth} ${vbHeight}`)
+        }
       }
+      
+      svgEl.removeAttribute('width')
+      svgEl.removeAttribute('height')
+      
+      if (svgEl.style) {
+        svgEl.style.maxWidth = 'none'
+        svgEl.style.height = 'auto'
+      }
+      
+      // Set absolute pixel dimensions so it does not shrink unreadably
+      svgEl.setAttribute('width', `${vbWidth}px`)
+      svgEl.setAttribute('height', `${vbHeight}px`)
+      svgEl.setAttribute('preserveAspectRatio', 'xMidYMid meet')
+      
+      const serializer = new XMLSerializer()
+      const modifiedSvg = serializer.serializeToString(svgDoc)
+      setSvgContent(modifiedSvg)
     } catch (err) {
       console.error('Mermaid render error:', err)
       setError('Invalid Mermaid syntax. Please check your code.')
@@ -352,104 +369,68 @@ const MermaidModal = ({ visible, onClose, canvas, theme, mode = 'generate' }) =>
     if (!canvas || !svgContent) return
 
     try {
-      // Convert SVG to data URL (not blob URL) to avoid CORS issues
+      // Use SVG Data URL directly to maintain infinite vector resolution instead of rasterizing to PNG
       const svgBase64 = btoa(unescape(encodeURIComponent(svgContent)))
       const dataUrl = `data:image/svg+xml;base64,${svgBase64}`
       
-      // Parse SVG dimensions
+      // Parse intrinsic SVG dimensions to use as the physical bounds on canvas
       const parser = new DOMParser()
       const svgDoc = parser.parseFromString(svgContent, 'image/svg+xml')
       const svgEl = svgDoc.documentElement
-      let svgW = parseFloat(svgEl.getAttribute('width')) || 0
-      let svgH = parseFloat(svgEl.getAttribute('height')) || 0
       
-      if (!svgW || !svgH) {
-        const vb = svgEl.getAttribute('viewBox')
-        if (vb) {
-          const parts = vb.trim().split(/[\s,]+/)
-          svgW = parseFloat(parts[2]) || 800
-          svgH = parseFloat(parts[3]) || 600
-        } else {
-          svgW = 800
-          svgH = 600
-        }
+      let svgW = 800, svgH = 600;
+      const vb = svgEl.getAttribute('viewBox')
+      if (vb) {
+        const parts = vb.trim().split(/[\s,]+/)
+        svgW = parseFloat(parts[2]) || svgW
+        svgH = parseFloat(parts[3]) || svgH
+      } else {
+        svgW = parseFloat(svgEl.getAttribute('width')) || svgW
+        svgH = parseFloat(svgEl.getAttribute('height')) || svgH
       }
 
-      // Load as image and convert to high-res PNG
-      const img = new Image()
-      img.crossOrigin = 'anonymous' // Allow canvas export
-      
-      img.onload = () => {
-        try {
-          const w = img.naturalWidth || svgW
-          const h = img.naturalHeight || svgH
-          
-          // Create high-res canvas (4x for crisp rendering on all displays)
-          const tempCanvas = document.createElement('canvas')
-          tempCanvas.width = w * 4
-          tempCanvas.height = h * 4
-          const ctx = tempCanvas.getContext('2d', { willReadFrequently: false })
-          
-          // White background
-          ctx.fillStyle = '#ffffff'
-          ctx.fillRect(0, 0, w * 4, h * 4)
-          
-          // Draw SVG image at 4x scale for crisp rendering
-          ctx.drawImage(img, 0, 0, w * 4, h * 4)
-          
-          // Convert to PNG
-          const pngDataUrl = tempCanvas.toDataURL('image/png')
-          
-          // Add to Fabric canvas
-          fabric.Image.fromURL(pngDataUrl, (fabricImg) => {
-            if (!fabricImg) {
-              setError('Failed to create diagram image')
-              return
-            }
-            
-            // Scale the image down to fit canvas (50% max)
-            const maxWidth = canvas.getWidth() * 0.5
-            const maxHeight = canvas.getHeight() * 0.5
-            const scale = Math.min(maxWidth / fabricImg.width, maxHeight / fabricImg.height, 1)
-            fabricImg.scale(scale)
-            
-            // Center in viewport
-            const vpt = canvas.viewportTransform
-            const vpCenterX = (canvas.getWidth() / 2 - vpt[4]) / vpt[0]
-            const vpCenterY = (canvas.getHeight() / 2 - vpt[5]) / vpt[3]
-            
-            fabricImg.set({
-              left: vpCenterX - (fabricImg.width * fabricImg.scaleX) / 2,
-              top: vpCenterY - (fabricImg.height * fabricImg.scaleY) / 2,
-              selectable: true,
-              evented: true,
-            })
-            fabricImg.setCoords()
-            
-            canvas.add(fabricImg)
-            canvas.setActiveObject(fabricImg)
-            canvas.renderAll()
-            
-            // Trigger history snapshot and ensure object is selected
-            setTimeout(() => {
-              canvas.setActiveObject(fabricImg)
-              canvas.renderAll()
-              canvas.fire('object:modified')
-            }, 50)
-            onClose()
-          }, { crossOrigin: 'anonymous' })
-        } catch (err) {
-          console.error('Canvas export error:', err)
-          setError('Failed to export diagram. Browser security restriction.')
+      // Add to Fabric canvas natively as an SVG Image, keeping perfect crispness eternally
+      fabric.Image.fromURL(dataUrl, (fabricImg) => {
+        if (!fabricImg) {
+          setError('Failed to create diagram image')
+          return
         }
-      }
+        
+        // Disable object caching so scaling or zooming renders vector crisp instantly at all scales
+        fabricImg.set({
+          objectCaching: false,
+          selectable: true,
+          evented: true,
+        })
+        
+        // Render at intrinsic SVG pixel width natively to keep labels readable natively
+        fabricImg.scaleToWidth(svgW)
+        
+        // Center in viewport
+        const vpt = canvas.viewportTransform
+        const vpCenterX = (canvas.getWidth() / 2 - vpt[4]) / vpt[0]
+        const vpCenterY = (canvas.getHeight() / 2 - vpt[5]) / vpt[3]
+        
+        fabricImg.set({
+          left: vpCenterX - (fabricImg.getScaledWidth()) / 2,
+          top: vpCenterY - (fabricImg.getScaledHeight()) / 2,
+        })
+        
+        fabricImg.setCoords()
+        canvas.add(fabricImg)
+        canvas.setActiveObject(fabricImg)
+        canvas.renderAll()
+        
+        // Trigger history snapshot and ensure object is selected
+        setTimeout(() => {
+          canvas.setActiveObject(fabricImg)
+          canvas.renderAll()
+          canvas.fire('object:modified')
+        }, 50)
+        
+        onClose()
+      })
       
-      img.onerror = (err) => {
-        console.error('Image load error:', err)
-        setError('Failed to load diagram image')
-      }
-      
-      img.src = dataUrl
     } catch (err) {
       console.error('Failed to insert diagram:', err)
       setError('Failed to insert diagram to canvas')

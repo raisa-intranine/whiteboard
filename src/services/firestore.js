@@ -554,13 +554,17 @@ export const getSessionCollaborators = async (boardId, sessionId) => {
   const creatorSnap = await getDoc(creatorRef)
   const creator = creatorSnap.exists() ? { id: creatorSnap.id, ...creatorSnap.data() } : null
   
-  // Get collaborators info
+  // Get collaborators info with their roles
   const collaborators = []
   for (const userId of session.collaborators || []) {
     const userRef = doc(db, 'users', userId)
     const userSnap = await getDoc(userRef)
     if (userSnap.exists()) {
-      collaborators.push({ id: userSnap.id, ...userSnap.data() })
+      collaborators.push({
+        id: userSnap.id,
+        ...userSnap.data(),
+        role: session.roles?.[userId] || 'editor'
+      })
     }
   }
   
@@ -574,7 +578,7 @@ export const getSessionCollaborators = async (boardId, sessionId) => {
 /**
  * Add collaborator to a session
  */
-export const addSessionCollaborator = async (boardId, sessionId, email) => {
+export const addSessionCollaborator = async (boardId, sessionId, email, role = 'editor') => {
   const result = await searchUsers(email)
   
   if (result.users.length === 0) {
@@ -583,7 +587,8 @@ export const addSessionCollaborator = async (boardId, sessionId, email) => {
     await setDoc(inviteRef, {
       email: email.toLowerCase(),
       invitedAt: serverTimestamp(),
-      status: 'pending'
+      status: 'pending',
+      role
     })
     return { invited: true, email }
   }
@@ -591,7 +596,8 @@ export const addSessionCollaborator = async (boardId, sessionId, email) => {
   const userId = result.users[0].id
   const sessionRef = doc(db, 'boards', boardId, 'sessions', sessionId)
   await updateDoc(sessionRef, {
-    collaborators: arrayUnion(userId)
+    collaborators: arrayUnion(userId),
+    [`roles.${userId}`]: role
   })
   
   return { added: true, userId }
@@ -605,6 +611,137 @@ export const removeSessionCollaborator = async (boardId, sessionId, userId) => {
   await updateDoc(sessionRef, {
     collaborators: arrayRemove(userId)
   })
+}
+
+/**
+ * Update a collaborator's role on a specific session
+ */
+export const updateSessionCollaboratorRole = async (boardId, sessionId, userId, role) => {
+  const sessionRef = doc(db, 'boards', boardId, 'sessions', sessionId)
+  await updateDoc(sessionRef, {
+    [`roles.${userId}`]: role
+  })
+}
+
+/**
+ * Update a collaborator's role on a board
+ */
+export const updateCollaboratorRole = async (boardId, userId, role) => {
+  const boardRef = doc(db, 'boards', boardId)
+  await updateDoc(boardRef, {
+    [`roles.${userId}`]: role
+  })
+}
+
+/**
+ * Update a pending invite's role
+ */
+export const updateInviteRole = async (boardId, inviteId, role) => {
+  const inviteRef = doc(db, 'boards', boardId, 'invites', inviteId)
+  await updateDoc(inviteRef, { role })
+}
+
+/**
+ * Get the current user's role on a board
+ * Returns 'owner' | 'editor' | 'commentor' | 'viewer'
+ */
+export const getUserBoardRole = async (boardId) => {
+  const user = auth.currentUser
+  if (!user) return null
+
+  const board = await getBoard(boardId)
+  if (board.ownerId === user.uid) return 'owner'
+
+  const role = board.roles?.[user.uid]
+  if (role) return role
+
+  // If user is in collaborators array but no explicit role, default to editor
+  if ((board.collaborators || []).includes(user.uid)) return 'editor'
+
+  // Public board
+  if (board.isPublic) return board.defaultRole || 'viewer'
+
+  return null
+}
+
+/**
+ * Listen and resolve the current user's real-time role based on Board and Session documents.
+ * Session role explicitly overrides Board role if set.
+ * Returns an unsubscribe function.
+ */
+export const listenUserRole = (boardId, sessionId, userId, callback) => {
+  if (!userId) return () => {}
+
+  let boardRole = null
+  let sessionRole = null
+  let isBoardOwner = false
+  let isPublic = false
+  let defaultRole = 'viewer'
+
+  const resolveAndNotify = () => {
+    if (isBoardOwner) {
+      callback('owner')
+      return
+    }
+    // Session role takes absolute precedence if the user is a targeted session collaborator
+    if (sessionRole) {
+      callback(sessionRole)
+      return
+    }
+    // Fallback to board role
+    if (boardRole) {
+      callback(boardRole)
+      return
+    }
+    // Public fallback
+    if (isPublic) {
+      callback(defaultRole)
+      return
+    }
+    callback('viewer')
+  }
+
+  const unsubBoard = onSnapshot(doc(db, 'boards', boardId), (docSnap) => {
+    if (docSnap.exists()) {
+      const data = docSnap.data()
+      isBoardOwner = data.ownerId === userId
+      isPublic = !!data.isPublic
+      defaultRole = data.defaultRole || 'viewer'
+      
+      const role = data.roles?.[userId]
+      if (role) {
+        boardRole = role
+      } else if ((data.collaborators || []).includes(userId)) {
+        boardRole = 'editor'
+      } else {
+        boardRole = null
+      }
+      resolveAndNotify()
+    }
+  })
+
+  let unsubSession = () => {}
+  if (sessionId) {
+    unsubSession = onSnapshot(doc(db, 'boards', boardId, 'sessions', sessionId), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data()
+        const role = data.roles?.[userId]
+        if (role) {
+          sessionRole = role
+        } else if ((data.collaborators || []).includes(userId)) {
+          sessionRole = 'editor'
+        } else {
+          sessionRole = null
+        }
+        resolveAndNotify()
+      }
+    })
+  }
+
+  return () => {
+    unsubBoard()
+    unsubSession()
+  }
 }
 
 /**
@@ -624,7 +761,11 @@ export const getCollaborators = async (boardId) => {
     const userRef = doc(db, 'users', userId)
     const userSnap = await getDoc(userRef)
     if (userSnap.exists()) {
-      collaborators.push({ id: userSnap.id, ...userSnap.data() })
+      collaborators.push({ 
+        id: userSnap.id, 
+        ...userSnap.data(),
+        role: board.roles?.[userId] || 'editor'
+      })
     }
   }
   
@@ -636,21 +777,23 @@ export const getCollaborators = async (boardId) => {
     email: doc.data().email,
     name: doc.data().email, // Use email as name for pending invites
     isPending: true,
-    invitedAt: doc.data().invitedAt
+    invitedAt: doc.data().invitedAt,
+    role: doc.data().role || 'editor'
   }))
   
   return {
     owner,
     collaborators,
     pendingInvites,
-    isPublic: board.isPublic
+    isPublic: board.isPublic,
+    defaultRole: board.defaultRole || 'viewer'
   }
 }
 
 /**
  * Share board (make public or add collaborator)
  */
-export const shareBoard = async (boardId, email = null, allowInvite = false) => {
+export const shareBoard = async (boardId, email = null, allowInvite = false, role = 'editor') => {
   const boardRef = doc(db, 'boards', boardId)
   
   if (email) {
@@ -667,7 +810,8 @@ export const shareBoard = async (boardId, email = null, allowInvite = false) => 
       await setDoc(inviteRef, {
         email: email.toLowerCase(),
         invitedAt: serverTimestamp(),
-        status: 'pending'
+        status: 'pending',
+        role: role
       })
       
       return { invited: true, email }
@@ -675,14 +819,16 @@ export const shareBoard = async (boardId, email = null, allowInvite = false) => 
     
     const userId = result.users[0].id
     await updateDoc(boardRef, {
-      collaborators: arrayUnion(userId)
+      collaborators: arrayUnion(userId),
+      [`roles.${userId}`]: role
     })
     
     return { added: true, userId }
   } else {
     // Make board public
     await updateDoc(boardRef, {
-      isPublic: true
+      isPublic: true,
+      defaultRole: role
     })
     
     return { public: true }

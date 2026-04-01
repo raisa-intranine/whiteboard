@@ -277,14 +277,12 @@
   overflow: auto;
   display: flex;
   align-items: flex-start;
-  justify-content: center;
   background: #f9fafb;
   cursor: default;
   position: relative;
 }
 
 .mermaid-preview-content > div {
-  max-width: 100%;
   transform-origin: top center;
   transition: transform 0.2s ease;
 }
@@ -304,7 +302,6 @@
 }
 
 .mermaid-preview-content svg {
-  max-width: 100%;
   height: auto;
 }
 

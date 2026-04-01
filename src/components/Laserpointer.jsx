@@ -61,19 +61,10 @@ const LaserPointer = ({ active, containerRef }) => {
       posRef.current = null
     }
 
-    // Attach to the overlay canvas itself (pointer-events: auto when active)
-    overlay.addEventListener('pointermove',  onPointerMove)
-    overlay.addEventListener('pointerleave', onPointerLeave)
-    overlay.addEventListener('pointerout',   onPointerLeave)
-
-    // Also listen on window so the dot tracks even if pointer briefly leaves
-    // the overlay (e.g. fast swipes on mobile)
+    // Track pointer movement globally
     window.addEventListener('pointermove', onPointerMove)
 
     return () => {
-      overlay.removeEventListener('pointermove',  onPointerMove)
-      overlay.removeEventListener('pointerleave', onPointerLeave)
-      overlay.removeEventListener('pointerout',   onPointerLeave)
       window.removeEventListener('pointermove', onPointerMove)
       posRef.current = null
     }

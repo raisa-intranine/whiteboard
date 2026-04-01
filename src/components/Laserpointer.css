@@ -16,9 +16,4 @@
   opacity: 1;
   /* Hide the system cursor on desktop */
   cursor: none;
-  /* Accept all pointer input (mouse, touch, stylus) */
-  pointer-events: auto;
-  /* Prevent the browser from hijacking touch gestures
-     so pointermove fires reliably on mobile */
-  touch-action: none;
 }

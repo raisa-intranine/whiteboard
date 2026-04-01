@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { searchUsers, shareBoard, getCollaborators, removeCollaborator, removePendingInvite } from '../services/firestore'
+import { searchUsers, shareBoard, getCollaborators, removeCollaborator, removePendingInvite, updateCollaboratorRole, updateInviteRole } from '../services/firestore'
 import { sendBoardInvite } from '../services/email'
 import { auth } from '../services/firebase'
 import './ShareModal.css'
@@ -26,6 +26,7 @@ const ShareModal = ({ visible, onClose, boardId, theme }) => {
   const [pendingInvites, setPendingInvites] = useState([])
   const [owner, setOwner] = useState(null)
   const [isPublic, setIsPublic] = useState(false)
+  const [selectedRole, setSelectedRole] = useState('editor')
   const [copied, setCopied] = useState(false)
   const [loading, setLoading] = useState(false)
   const [removingUserId, setRemovingUserId] = useState(null)
@@ -94,7 +95,7 @@ const ShareModal = ({ visible, onClose, boardId, theme }) => {
   const handleAddCollaborator = async (user) => {
     setLoading(true)
     try {
-      await shareBoard(boardId, user.email)
+      await shareBoard(boardId, user.email, false, selectedRole)
       await loadCollaborators()
       setSearchQuery('')
       setSearchResults([])
@@ -102,7 +103,7 @@ const ShareModal = ({ visible, onClose, boardId, theme }) => {
       // Show success notification
       setNotification({
         type: 'success',
-        message: `${user.name} has been added. They can now access this board.`
+        message: `${user.name} has been added as ${selectedRole}.`
       })
       setTimeout(() => setNotification(null), 4000)
     } catch (err) {
@@ -120,7 +121,7 @@ const ShareModal = ({ visible, onClose, boardId, theme }) => {
   const handleAddByEmail = async (email) => {
     setLoading(true)
     try {
-      const result = await shareBoard(boardId, email, true) // true = allow invite by email
+      const result = await shareBoard(boardId, email, true, selectedRole) // true = allow invite by email
       
       // Send email if it was an invite (user not found)
       if (result.invited) {
@@ -158,6 +159,19 @@ const ShareModal = ({ visible, onClose, boardId, theme }) => {
       setTimeout(() => setNotification(null), 4000)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleRoleChange = async (userId, newRole, isInvite = false, inviteId = null) => {
+    try {
+      if (isInvite && inviteId) {
+        await updateInviteRole(boardId, inviteId, newRole)
+      } else {
+        await updateCollaboratorRole(boardId, userId, newRole)
+      }
+      await loadCollaborators()
+    } catch (err) {
+      console.error('Failed to update role:', err)
     }
   }
 
@@ -273,19 +287,30 @@ const ShareModal = ({ visible, onClose, boardId, theme }) => {
           {/* Search for users */}
           <div className="share-section">
             <label className="share-label">Add people</label>
-            <div className="share-search-box">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <circle cx="11" cy="11" r="8" />
-                <path d="m21 21-4.35-4.35" />
-              </svg>
-              <input
-                type="text"
-                placeholder="Search by email..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                onKeyDown={e => e.stopPropagation()}
-                disabled={loading}
-              />
+            <div className="share-search-box-container">
+              <div className="share-search-box">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="m21 21-4.35-4.35" />
+                </svg>
+                <input
+                  type="text"
+                  placeholder="Search by email..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  onKeyDown={e => e.stopPropagation()}
+                  disabled={loading}
+                />
+              </div>
+              <select
+                className="share-role-select"
+                value={selectedRole}
+                onChange={e => setSelectedRole(e.target.value)}
+              >
+                <option value="viewer">Viewer</option>
+                <option value="commentor">Commentor</option>
+                <option value="editor">Editor</option>
+              </select>
             </div>
 
             {searching && (
@@ -370,6 +395,16 @@ const ShareModal = ({ visible, onClose, boardId, theme }) => {
                       <div className="share-user-name">{collab.name}</div>
                       <div className="share-user-email">{collab.email}</div>
                     </div>
+                    <select
+                      className="share-role-select share-role-select--inline"
+                      value={collab.role || 'editor'}
+                      onChange={e => handleRoleChange(collab.id, e.target.value)}
+                      disabled={loading}
+                    >
+                      <option value="viewer">Viewer</option>
+                      <option value="commentor">Commentor</option>
+                      <option value="editor">Editor</option>
+                    </select>
                     <button
                       className="share-remove-btn"
                       onClick={() => handleRemoveCollaborator(collab.id)}
@@ -400,6 +435,16 @@ const ShareModal = ({ visible, onClose, boardId, theme }) => {
                       <div className="share-user-name">{invite.email}</div>
                       <div className="share-user-email" style={{ fontStyle: 'italic', opacity: 0.7 }}>Pending invite</div>
                     </div>
+                    <select
+                      className="share-role-select share-role-select--inline"
+                      value={invite.role || 'editor'}
+                      onChange={e => handleRoleChange(null, e.target.value, true, invite.id)}
+                      disabled={loading}
+                    >
+                      <option value="viewer">Viewer</option>
+                      <option value="commentor">Commentor</option>
+                      <option value="editor">Editor</option>
+                    </select>
                     <button
                       className="share-remove-btn"
                       onClick={() => handleRemovePendingInvite(invite.id)}

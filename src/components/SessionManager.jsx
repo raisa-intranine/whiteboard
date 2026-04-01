@@ -11,7 +11,8 @@ import {
   addSessionCollaborator,
   removeSessionCollaborator,
   getSessionCollaborators,
-  searchUsers
+  searchUsers,
+  updateSessionCollaboratorRole
 } from '../services/firestore'
 import { sendSessionInvite } from '../services/email'
 import { auth } from '../services/firebase'
@@ -33,6 +34,7 @@ export default function SessionManager({ boardId, currentSessionId, onSessionCha
   const [sessionCollaborators, setSessionCollaborators] = useState({}) // { sessionId: [collaborators] }
   const [userSuggestions, setUserSuggestions] = useState([])
   const [showSuggestions, setShowSuggestions] = useState(false)
+  const [selectedRole, setSelectedRole] = useState('editor')
   const searchTimeoutRef = useRef(null)
   const shareDialogRef = useRef(null)
   const triggerRef = useRef(null)
@@ -268,7 +270,7 @@ export default function SessionManager({ boardId, currentSessionId, onSessionCha
     setSharingSessionId(sessionId)
     setShowSuggestions(false)
     try {
-      const result = await addSessionCollaborator(boardId, sessionId, shareEmail)
+      const result = await addSessionCollaborator(boardId, sessionId, shareEmail, selectedRole)
       const user = auth.currentUser
       const session = await getSession(boardId, sessionId)
       
@@ -314,6 +316,24 @@ export default function SessionManager({ boardId, currentSessionId, onSessionCha
       showToast('Failed to share: ' + err.message, 'error')
     } finally {
       setSharingSessionId(null)
+    }
+  }
+
+  const handleRoleChange = async (sessionId, userId, newRole) => {
+    try {
+      await updateSessionCollaboratorRole(boardId, sessionId, userId, newRole)
+      // Reload collaborators
+      const { collaborators: sessionCollaborators } = await getSessionCollaborators(boardId, sessionId)
+      setCollaborators(sessionCollaborators)
+      
+      // Update the session collaborators map
+      setSessionCollaborators(prev => ({
+        ...prev,
+        [sessionId]: sessionCollaborators
+      }))
+    } catch (err) {
+      console.error('Failed to update role:', err)
+      showToast('Failed to update role: ' + err.message, 'error')
     }
   }
 
@@ -584,13 +604,26 @@ export default function SessionManager({ boardId, currentSessionId, onSessionCha
                             )}
                           </div>
                           
-                          <button 
-                            onClick={() => handleShareSession(session.id)}
-                            disabled={sharingSessionId === session.id || !shareEmail.trim()}
-                            className={sharingSessionId === session.id ? 'loading' : ''}
-                          >
-                            {sharingSessionId === session.id ? 'Sending invite...' : 'Share'}
-                          </button>
+                          <div className="share-actions-row">
+                            <select
+                              className="session-role-select"
+                              value={selectedRole}
+                              onChange={e => setSelectedRole(e.target.value)}
+                              onClick={e => e.stopPropagation()}
+                            >
+                              <option value="viewer">Viewer</option>
+                              <option value="commentor">Commentor</option>
+                              <option value="editor">Editor</option>
+                            </select>
+                            
+                            <button 
+                              onClick={() => handleShareSession(session.id)}
+                              disabled={sharingSessionId === session.id || !shareEmail.trim()}
+                              className={sharingSessionId === session.id ? 'loading' : ''}
+                            >
+                              {sharingSessionId === session.id ? 'Sending invite...' : 'Share'}
+                            </button>
+                          </div>
                         </div>
                         
                         {loadingCollaborators ? (
@@ -604,6 +637,16 @@ export default function SessionManager({ boardId, currentSessionId, onSessionCha
                                   <span className="collaborator-name">{collab.name}</span>
                                   <span className="collaborator-email">{collab.email}</span>
                                 </div>
+                                <select
+                                  className="session-role-select session-role-select--inline"
+                                  value={collab.role || 'editor'}
+                                  onChange={e => handleRoleChange(session.id, collab.id, e.target.value)}
+                                  disabled={loading}
+                                >
+                                  <option value="viewer">Viewer</option>
+                                  <option value="commentor">Commentor</option>
+                                  <option value="editor">Editor</option>
+                                </select>
                                 <button
                                   className="remove-collaborator"
                                   onClick={() => handleRemoveCollaborator(session.id, collab.id, collab.name)}

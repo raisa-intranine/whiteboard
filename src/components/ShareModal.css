@@ -131,6 +131,12 @@
   color: #9aa0a6;
 }
 
+.share-search-box-container {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .share-search-box {
   display: flex;
   align-items: center;
@@ -140,6 +146,40 @@
   border-radius: 8px;
   background: #ffffff;
   transition: all 0.2s;
+  flex: 1;
+}
+
+.share-role-select {
+  padding: 10px;
+  border: 1.5px solid #d1d5db;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #374151;
+  font-size: 14px;
+  cursor: pointer;
+  outline: none;
+}
+
+.share-role-select:focus {
+  border-color: #1a73e8;
+}
+
+.share-modal.dark .share-role-select {
+  background: #3c4043;
+  border-color: #5f6368;
+  color: #e8eaed;
+}
+
+.share-modal.dark .share-role-select:focus {
+  border-color: #8ab4f8;
+}
+
+/* Compact inline variant used inside collaborator rows */
+.share-role-select--inline {
+  padding: 4px 8px;
+  font-size: 12px;
+  border-radius: 6px;
+  flex-shrink: 0;
 }
 
 .share-search-box:focus-within {

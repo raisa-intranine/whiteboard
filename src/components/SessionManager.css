@@ -401,13 +401,57 @@
 
 .share-input-group {
   display: flex;
+  flex-direction: column;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.share-actions-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .share-input-wrapper {
   flex: 1;
   position: relative;
+}
+
+.session-role-select {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color, #e0e0e0);
+  background: var(--bg-primary, #ffffff);
+  color: var(--text-primary, #1e1e1e);
+  font-size: 13px; /* Slightly smaller to match input */
+  cursor: pointer;
+  outline: none;
+  font-family: inherit;
+  transition: all 0.2s ease;
+  flex: 1; /* Make it take available space but give button priority */
+}
+
+.session-role-select:focus {
+  border-color: #1a73e8;
+  box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+}
+
+.session-manager.dark .session-role-select {
+  border-color: #404040;
+  background: #2a2a2a;
+  color: #f0f0f0;
+}
+
+.session-manager.dark .session-role-select:focus {
+  border-color: #8ab4f8;
+}
+
+.session-role-select--inline {
+  padding: 4px 8px;
+  font-size: 12px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  margin-right: 8px;
 }
 
 .share-input-group input {

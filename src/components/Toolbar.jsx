@@ -61,7 +61,12 @@ const Toolbar = ({
   fillShape, setFillShape,
   canUndo, canRedo,
   onClearRequest,
+  userRole = 'editor'
 }) => {
+  const isViewer = userRole === 'viewer'
+  const isCommentor = userRole === 'commentor'
+  const readOnly = isViewer || isCommentor
+
   const [showShapes,  setShowShapes]  = useState(false)
   const [showPalette, setShowPalette] = useState(false)
   const [zoom,        setZoom]        = useState(100)
@@ -169,12 +174,19 @@ const Toolbar = ({
 
       <div className="toolbar-section">
         <button className={`tool-btn ${tool==='select'      ?'active':''}`} onClick={()=>setTool('select')}      data-tooltip="Select (V)">{IC.select}</button>
-        <button className={`tool-btn ${tool==='pan'         ?'active':''}`} onClick={()=>setTool('pan')}         data-tooltip="Hand Pan">{IC.pan}</button>
-        <button className={`tool-btn ${tool==='pen'         ?'active':''}`} onClick={()=>setTool('pen')}         data-tooltip="Pen (P)">{IC.pen}</button>
-        <button className={`tool-btn ${tool==='highlighter' ?'active':''}`} onClick={()=>setTool('highlighter')} data-tooltip="Highlighter">{IC.hi}</button>
-        <button className={`tool-btn ${tool==='eraser'      ?'active':''}`} onClick={()=>setTool('eraser')}      data-tooltip="Eraser (E)">{IC.eraser}</button>
-        <button className={`tool-btn ${tool==='line'        ?'active':''}`} onClick={()=>setTool('line')}        data-tooltip="Line (L)">{IC.line}</button>
+        {!isViewer && !isCommentor && (
+          <button className={`tool-btn ${tool==='pan'         ?'active':''}`} onClick={()=>setTool('pan')}         data-tooltip="Hand Pan">{IC.pan}</button>
+        )}
+        {!readOnly && (
+          <>
+            <button className={`tool-btn ${tool==='pen'         ?'active':''}`} onClick={()=>setTool('pen')}         data-tooltip="Pen (P)">{IC.pen}</button>
+            <button className={`tool-btn ${tool==='highlighter' ?'active':''}`} onClick={()=>setTool('highlighter')} data-tooltip="Highlighter">{IC.hi}</button>
+            <button className={`tool-btn ${tool==='eraser'      ?'active':''}`} onClick={()=>setTool('eraser')}      data-tooltip="Eraser (E)">{IC.eraser}</button>
+            <button className={`tool-btn ${tool==='line'        ?'active':''}`} onClick={()=>setTool('line')}        data-tooltip="Line (L)">{IC.line}</button>
+          </>
+        )}
 
+        {!readOnly && (
         <div className="shapes-dropdown" ref={shapesRef}>
           <button
             ref={shapesBtnRef}
@@ -196,15 +208,23 @@ const Toolbar = ({
             </div>
           )}
         </div>
+        )}
 
-        <button className={`tool-btn ${tool==='text'  ?'active':''}`} onClick={()=>setTool('text')}   data-tooltip="Text (T)">{IC.text}</button>
+        {(!isViewer) && (
+          <button className={`tool-btn ${tool==='text'  ?'active':''}`} onClick={()=>setTool('text')}   data-tooltip="Text (T)">{IC.text}</button>
+        )}
         {/* <button className={`tool-btn ${tool==='sticky'?'active':''}`} onClick={()=>setTool('sticky')} data-tooltip="Sticky Note">{IC.sticky}</button> */}
 
-        <button className="tool-btn" onClick={() => fileInputRef.current?.click()} data-tooltip="Import Image">
-          {IC.image}
-        </button>
-        <input ref={fileInputRef} type="file" accept="image/*" style={{display:'none'}} onChange={handleImageUpload} />
+        {!readOnly && (
+          <>
+            <button className="tool-btn" onClick={() => fileInputRef.current?.click()} data-tooltip="Import Image">
+              {IC.image}
+            </button>
+            <input ref={fileInputRef} type="file" accept="image/*" style={{display:'none'}} onChange={handleImageUpload} />
+          </>
+        )}
         
+        {!readOnly && (
         <button className="tool-btn" onClick={() => window.__wbShowMermaid?.('create')} data-tooltip="Diagram">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <rect x="3" y="3" width="7" height="7" rx="1"/>
@@ -217,8 +237,10 @@ const Toolbar = ({
             <line x1="17.5" y1="10" x2="17.5" y2="14"/>
           </svg>
         </button>
+        )}
       </div>
 
+      {(!isViewer) && (
       <div className="toolbar-section">
         <div className="color-palette-wrapper" ref={paletteRef}>
           <button
@@ -243,34 +265,42 @@ const Toolbar = ({
             </div>
           )}
         </div>
+        {!isCommentor && (
+          <div className="stroke-width-control">
+            <label>Width</label>
+            <input type="range" min="1" max="20" value={strokeWidth}
+              onChange={e => setStrokeWidth(Number(e.target.value))} />
+            <span>{strokeWidth}</span>
+          </div>
+        )}
 
-        <div className="stroke-width-control">
-          <label>Width</label>
-          <input type="range" min="1" max="20" value={strokeWidth}
-            onChange={e => setStrokeWidth(Number(e.target.value))} />
-          <span>{strokeWidth}</span>
-        </div>
-
-        <button
-          className={`fill-toggle-btn ${fillShape?'on':''}`}
-          onClick={() => setFillShape(v => !v)}
-          data-tooltip={fillShape ? 'Fill: On' : 'Fill: Off'}
-          aria-pressed={fillShape}
-        >
-          <span className="fill-toggle-btn__track"><span className="fill-toggle-btn__thumb" /></span>
-          <span className="fill-toggle-btn__label">Fill</span>
-        </button>
+        {!isCommentor && (
+          <button
+            className={`fill-toggle-btn ${fillShape?'on':''}`}
+            onClick={() => setFillShape(v => !v)}
+            data-tooltip={fillShape ? 'Fill: On' : 'Fill: Off'}
+            aria-pressed={fillShape}
+          >
+            <span className="fill-toggle-btn__track"><span className="fill-toggle-btn__thumb" /></span>
+            <span className="fill-toggle-btn__label">Fill</span>
+          </button>
+        )}
       </div>
+      )}
 
+      {!readOnly && (
       <div className="toolbar-section">
         <button className={`tool-btn ${!canUndo?'disabled':''}`} onClick={handleUndo} data-tooltip="Undo (⌘Z)" disabled={!canUndo}>{IC.undo}</button>
         <button className={`tool-btn ${!canRedo?'disabled':''}`} onClick={handleRedo} data-tooltip="Redo (⌘Y)" disabled={!canRedo}>{IC.redo}</button>
       </div>
+      )}
 
+      {(!isViewer) && (
       <div className="toolbar-section">
         <button className="tool-btn" onClick={handleDelete}   data-tooltip="Delete selected">{IC.del}</button>
-        <button className="tool-btn" onClick={onClearRequest} data-tooltip="Clear canvas">{IC.clear}</button>
+        {!readOnly && <button className="tool-btn" onClick={onClearRequest} data-tooltip="Clear canvas">{IC.clear}</button>}
       </div>
+      )}
 
       <div className="toolbar-section">
         <button className="tool-btn" onClick={() => updateZoom((canvas?.getZoom()??1)*0.9)} data-tooltip="Zoom out">{IC.zoomOut}</button>
@@ -280,29 +310,45 @@ const Toolbar = ({
 
       <div className="toolbar-right">
 
-        {/* Frame tool — sits right before Laser */}
-        <button
-          className={`tool-btn frame-btn ${tool==='frame'?'active':''}`}
-          onClick={() => setTool(tool==='frame'?'select':'frame')}
-          data-tooltip="Frame"
-          aria-pressed={tool==='frame'}
-        >
-          {IC.frame}
-          <span className="frame-label">Frame</span>
-        </button>
+        {/* Role indicator badge — shown to all users */}
+        {userRole && (
+          <div className={`role-badge role-badge--${userRole}`} data-tooltip={`You are a ${userRole}`}>
+            {userRole === 'owner' ? ' Owner '
+              : userRole === 'editor' ? ' Editor '
+              : userRole === 'commentor' ? ' Commentor '
+              : ' Viewer '}
+          </div>
+        )}
 
         <div className="toolbar-sep" />
 
-        <button
-          className={`tool-btn preview-btn`}
-          onClick={() => window.__wbPreview?.()}
-          data-tooltip="Preview Video"
-        >
-          {IC.preview}
-          <span className="preview-label">Preview</span>
-        </button>
+        {!readOnly && (
+          <>
+            {/* Frame tool — sits right before Laser */}
+            <button
+              className={`tool-btn frame-btn ${tool==='frame'?'active':''}`}
+              onClick={() => setTool(tool==='frame'?'select':'frame')}
+              data-tooltip="Frame"
+              aria-pressed={tool==='frame'}
+            >
+              {IC.frame}
+              <span className="frame-label">Frame</span>
+            </button>
 
-        <div className="toolbar-sep" />
+            <div className="toolbar-sep" />
+
+            <button
+              className={`tool-btn preview-btn`}
+              onClick={() => window.__wbPreview?.()}
+              data-tooltip="Preview Video"
+            >
+              {IC.preview}
+              <span className="preview-label">Preview</span>
+            </button>
+
+            <div className="toolbar-sep" />
+          </>
+        )}
 
         <button
           className={`tool-btn laser-btn ${tool==='laser'?'active laser-on':''}`}

@@ -83,6 +83,11 @@ function App() {
   const [currentSessionId, setCurrentSessionId] = useState(null)
   const [mermaidVisible, setMermaidVisible] = useState(false)
   const [mermaidMode, setMermaidMode] = useState('create')
+  const [userRole, setUserRole] = useState('editor')
+
+  const handleRoleChange = (role) => {
+    setUserRole(role)
+  }
   
   // Sync URL with session changes
   useEffect(() => {
@@ -198,6 +203,7 @@ function App() {
           canUndo={canUndo}
           canRedo={canRedo}
           onClearRequest={handleClearRequest}
+          userRole={userRole}
         />
         <div className="main-content">
           {showSidebar && (
@@ -233,6 +239,7 @@ function App() {
             currentSessionId={currentSessionId}
             onSessionIdChange={setCurrentSessionId}
             user={user}
+            onRoleChange={handleRoleChange}
           />
         </div>
 

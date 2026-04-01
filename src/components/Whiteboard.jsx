@@ -4,7 +4,7 @@ import ShapeProperties from './ShapeProperties'
 import LaserPointer from './Laserpointer'
 import PresenceIndicators from './PresenceIndicators'
 import './Whiteboard.css'
-import { getBoard, updateBoard, getSession, getSessions, updateSession, subscribeToBoard, subscribeToSession, updatePresence as firestoreUpdatePresence, subscribeToPresence, removePresence, createBoard, createSession as firestoreCreateSession, saveUserHistorySnapshot, getUserHistory, updateUserHistoryIndex, clearUserHistory, clearAllSessionHistory, deleteUserHistorySnapshots } from '../services/firestore'
+import { getBoard, updateBoard, getSession, getSessions, updateSession, subscribeToBoard, subscribeToSession, updatePresence as firestoreUpdatePresence, subscribeToPresence, removePresence, createBoard, createSession as firestoreCreateSession, saveUserHistorySnapshot, getUserHistory, updateUserHistoryIndex, clearUserHistory, clearAllSessionHistory, deleteUserHistorySnapshots, listenUserRole } from '../services/firestore'
 
 // Import realtime service to sync state
 import * as realtimeService from '../services/realtime-firestore'
@@ -21,7 +21,7 @@ const getClientId = () => realtimeService.getClientId()
 const publishFullCanvas = (data) => realtimeService.publishFullCanvas(data)
 const publishClear = (data) => realtimeService.publishClear(data)
 const enterPresence = (userData) => realtimeService.enterPresence(userData)
-const updatePresence = (userData) => realtimeService.updatePresenceIfChanged(userData)
+const updatePresence = (userData) => realtimeService.updatePresence(userData)
 const onPresenceChange = (callback) => realtimeService.onPresenceChange(callback)
 const getPresenceMembers = () => realtimeService.getPresenceMembers()
 const isRealtimeConnected = () => realtimeService.isRealtimeConnected()
@@ -1064,7 +1064,7 @@ const drawPlaceholder = (ctx, obj) => {
 const Whiteboard = ({
   tool, setTool, color, strokeWidth,
   setCanvasRef, canvasBackground, setCanvasBackground, syncBoardAppearance, fillShape, onHistoryChange, theme,
-  onBoardIdChange, currentSessionId, onSessionIdChange, user,
+  onBoardIdChange, currentSessionId, onSessionIdChange, user, onRoleChange,
 }) => {
   console.log('[Whiteboard] Component render - user:', user ? `${user.name} (${user.email})` : 'NULL')
   console.log('[Whiteboard] Component render - currentSessionId:', currentSessionId)
@@ -1105,10 +1105,32 @@ const Whiteboard = ({
   const [previewMode, setPreviewMode] = useState({ active: false, paused: false })
   const playNextRef = useRef(null)
 
+  // Track the current user's role on this board: 'owner' | 'editor' | 'commentor' | 'viewer'
+  const userRoleRef = useRef('editor')
+  const [userRole, setUserRole] = useState('editor')
+
   // Update ref when prop changes
   useEffect(() => {
     currentSessionIdRef.current = currentSessionId
   }, [currentSessionId])
+
+  // Resolve and listen to user's real-time role based on board AND session
+  useEffect(() => {
+    const boardId = resolveBoardId()
+    const sessionId = currentSessionIdRef.current
+    if (!boardId || !user) return
+
+    const unsub = listenUserRole(boardId, sessionId, user.uid || user.id, (role) => {
+      if (role) {
+        userRoleRef.current = role
+        setUserRole(role)
+        onRoleChange?.(role)
+        console.log('[Whiteboard] Dynamically resolved user role:', role)
+      }
+    })
+
+    return () => unsub()
+  }, [user, currentSessionId])
 
   // Helper function to update presence only when state actually changes
   const updatePresenceIfChanged = useCallback((newState) => {
@@ -1140,6 +1162,7 @@ const Whiteboard = ({
   const colorRef = useRef(color)
   const strokeRef = useRef(strokeWidth)
   const toolRef = useRef(tool)
+  const userRef = useRef(user)
   const onMutationRef = useRef(null) // set once onMutation is defined inside the canvas useEffect
   const broadcastCanvasRef = useRef(null) // set once broadcastCanvas is defined inside the canvas useEffect
 
@@ -1147,6 +1170,7 @@ const Whiteboard = ({
   useEffect(() => { colorRef.current = color }, [color])
   useEffect(() => { strokeRef.current = strokeWidth }, [strokeWidth])
   useEffect(() => { toolRef.current = tool }, [tool])
+  useEffect(() => { userRef.current = user }, [user])
 
   // Apply color change to currently selected object(s)
   useEffect(() => {
@@ -1398,6 +1422,31 @@ const Whiteboard = ({
             currentCanvas.requestRenderAll()
           }
           realtimeIgnoreRef.current = false
+
+          // Re-apply role lock after realtime sync (new objects must also be locked)
+          const role = userRoleRef.current
+          if (role === 'viewer') {
+            currentCanvas.selection = false
+            currentCanvas.getObjects().forEach(obj => {
+              if (obj.isEraserStroke || obj.isFrame) return
+              obj.set({ selectable: false, evented: false, hasControls: false, hasBorders: false })
+            })
+            currentCanvas.discardActiveObject()
+            currentCanvas.requestRenderAll()
+          } else if (role === 'commentor') {
+            currentCanvas.selection = false
+            currentCanvas.getObjects().forEach(o => {
+              if (o.isEraserStroke || o.isFrame) return
+              const isOwnText = (o.type === 'textbox' || o.type === 'i-text') && o.createdBy === userRef.current?.email
+              if (isOwnText) {
+                o.set({ selectable: true, evented: true, hasControls: true, hasBorders: true })
+              } else {
+                o.set({ selectable: false, evented: false, hasControls: false, hasBorders: false })
+              }
+            })
+            currentCanvas.discardActiveObject()
+            currentCanvas.requestRenderAll()
+          }
         })
         return
       }
@@ -2409,6 +2458,31 @@ const Whiteboard = ({
       // Set canvas as loaded to remove opacity and prevent blink
       setIsCanvasLoaded(true)
 
+      // Re-apply role block instantly after load
+      const role = userRoleRef.current
+      if (role === 'viewer') {
+        canvas.selection = false
+        canvas.getObjects().forEach(obj => {
+          if (obj.isEraserStroke || obj.isFrame) return
+          obj.set({ selectable: false, evented: false, hasControls: false, hasBorders: false })
+        })
+        canvas.discardActiveObject()
+        canvas.requestRenderAll()
+      } else if (role === 'commentor') {
+        canvas.selection = false
+        canvas.getObjects().forEach(o => {
+          if (o.isEraserStroke || o.isFrame) return
+          const isOwnText = (o.type === 'textbox' || o.type === 'i-text') && o.createdBy === userRef.current?.email
+          if (isOwnText) {
+            o.set({ selectable: true, evented: true, hasControls: true, hasBorders: true })
+          } else {
+            o.set({ selectable: false, evented: false, hasControls: false, hasBorders: false })
+          }
+        })
+        canvas.discardActiveObject()
+        canvas.requestRenderAll()
+      }
+
       // Sync the background AND the UI theme to match what the DB stored
       const loadedBg = canvas.backgroundColor
       if (loadedBg && typeof syncBoardAppearance === 'function') {
@@ -2469,6 +2543,36 @@ const Whiteboard = ({
           console.log('[Whiteboard] Final render check - objects:', canvas.getObjects().length)
           canvas.requestRenderAll()
         }
+
+        // ── Role enforcement: lock canvas for viewers ──────────────────
+        const role = userRoleRef.current
+        if (role === 'viewer') {
+          console.log(`[Whiteboard] Applying read-only canvas lock for role: ${role}`)
+          canvas.selection = false
+          canvas.isDrawingMode = false
+          canvas.defaultCursor = 'default'
+          canvas.hoverCursor = 'default'
+          canvas.getObjects().forEach(obj => {
+            obj.set({
+              selectable: false,
+              evented: false,
+              hasControls: false,
+              hasBorders: false,
+            })
+          })
+          canvas.discardActiveObject()
+          canvas.requestRenderAll()
+        } else if (role === 'commentor') {
+          console.log(`[Whiteboard] Applying commentor canvas lock for role: ${role}`)
+          canvas.selection = false
+          canvas.isDrawingMode = false
+          canvas.defaultCursor = 'default'
+          canvas.hoverCursor = 'default'
+          // Don't lock individual objects — commentor needs to interact via text tool
+          canvas.discardActiveObject()
+          canvas.requestRenderAll()
+        }
+        // ─────────────────────────────────────────────────────────────────
       }, 100)
     })
 
@@ -2520,6 +2624,14 @@ const Whiteboard = ({
       // Don't create history entries until initial load is complete
       if (!isLoadedRef.current) return
       if (isMutingRef.current || isDrawingRef.current || realtimeIgnoreRef.current) return
+
+      // Block mutations for viewers — they cannot modify canvas objects
+      // Commentors can only add/edit text
+      const role = userRoleRef.current
+      if (role === 'viewer') {
+        console.log(`[Whiteboard] onMutation blocked — user role is '${role}'`)
+        return
+      }
 
       // Track that we made a local change
       lastLocalChangeRef.current = Date.now()
@@ -2684,52 +2796,124 @@ const Whiteboard = ({
     })
 
 
+    let isBindingErasers = false
+
     canvas.on('selection:created', (e) => {
-      const o = e.selected?.[0]
+      if (isBindingErasers) return
+
+      const active = canvas.getActiveObject()
+      if (!active) return
+
+      const selectedObjects = e.selected || []
+      const erasers = canvas.getObjects().filter(o => 
+        o.isEraserStroke && selectedObjects.some(sel => !sel.isEraserStroke && sel.intersectsWithObject(o))
+      )
+
+      const newErasers = erasers.filter(er => !selectedObjects.includes(er))
+
+      if (newErasers.length > 0) {
+        isBindingErasers = true
+        if (active.type === 'activeSelection') {
+          newErasers.forEach(er => active.addWithUpdate(er))
+          canvas.requestRenderAll()
+        } else {
+          canvas.discardActiveObject()
+          const sel = new fabric.ActiveSelection([active, ...newErasers], { canvas })
+          canvas.setActiveObject(sel)
+        }
+        isBindingErasers = false
+        return
+      }
+
+      // We ensure the first non-eraser object is used for properties panel detection so the user can still edit it
+      const o = selectedObjects.find(obj => !obj.isEraserStroke)
       setSelectedObject(o && SHAPE_TYPES.includes(o.type) ? o : null)
       syncTextBar(o)
       updateTextBarPos(o)
-      highlightLines(e.selected || [])
+      highlightLines(selectedObjects)
 
       // Bring selected objects to front
-      if (e.selected && e.selected.length > 0) {
-        e.selected.forEach(obj => {
+      if (selectedObjects.length > 0) {
+        selectedObjects.forEach(obj => {
           if (obj && !obj.isFrame) { // Don't bring frames to front
             canvas.bringToFront(obj)
           }
         })
+        
+        // Keep all eraser strokes at the absolute top so erased parts don't reappear
+        canvas.getObjects().forEach(o => {
+          if (o.isEraserStroke) {
+            canvas.bringToFront(o)
+          }
+        })
+        
         canvas.requestRenderAll()
       }
 
       // Publish all selected IDs to other users
       if (user) {
-        const ids = (e.selected || []).map(obj => obj.id).filter(Boolean)
+        const ids = selectedObjects.map(obj => obj.id).filter(Boolean)
         publishSelection(ids.length === 1 ? ids[0] : ids.length > 1 ? ids : null)
       }
     })
+
     canvas.on('selection:updated', (e) => {
-      const o = e.selected?.[0]
+      if (isBindingErasers) return
+
+      const active = canvas.getActiveObject()
+      if (!active) return
+
+      const selectedObjects = e.selected || []
+      const erasers = canvas.getObjects().filter(o => 
+        o.isEraserStroke && selectedObjects.some(sel => !sel.isEraserStroke && sel.intersectsWithObject(o))
+      )
+
+      const newErasers = erasers.filter(er => !selectedObjects.includes(er))
+
+      if (newErasers.length > 0) {
+        isBindingErasers = true
+        if (active.type === 'activeSelection') {
+          newErasers.forEach(er => active.addWithUpdate(er))
+          canvas.requestRenderAll()
+        } else {
+          canvas.discardActiveObject()
+          const sel = new fabric.ActiveSelection([active, ...newErasers], { canvas })
+          canvas.setActiveObject(sel)
+        }
+        isBindingErasers = false
+        return
+      }
+
+      const o = selectedObjects.find(obj => !obj.isEraserStroke)
       setSelectedObject(o && SHAPE_TYPES.includes(o.type) ? o : null)
       setAnimationMenu(null)
       syncTextBar(o)
       updateTextBarPos(o)
-      highlightLines(e.selected || [])
+      highlightLines(selectedObjects)
 
       // Bring selected objects to front
-      if (e.selected && e.selected.length > 0) {
-        e.selected.forEach(obj => {
+      if (selectedObjects.length > 0) {
+        selectedObjects.forEach(obj => {
           if (obj && !obj.isFrame) { // Don't bring frames to front
             canvas.bringToFront(obj)
           }
         })
+        
+        // Keep all eraser strokes at the absolute top so erased parts don't reappear
+        canvas.getObjects().forEach(o => {
+          if (o.isEraserStroke) {
+            canvas.bringToFront(o)
+          }
+        })
+        
         canvas.requestRenderAll()
       }
 
       // Publish all selected IDs to other users
       if (user) {
-        const allSelected = canvas.getActiveObject()?.type === 'activeSelection'
-          ? canvas.getActiveObject().getObjects()
-          : (e.selected || [])
+        const allSelected = active?.type === 'activeSelection'
+          ? active.getObjects()
+          : selectedObjects
         const ids = allSelected.map(obj => obj.id).filter(Boolean)
         publishSelection(ids.length === 1 ? ids[0] : ids.length > 1 ? ids : null)
       }
@@ -3551,12 +3735,38 @@ const Whiteboard = ({
       canvas.setCursor(cur)
     }
 
+    const role = userRoleRef.current
+    const isRestricted = role === 'viewer' || role === 'commentor'
+    const isCommentorRole = role === 'commentor'
+
+    // For commentor: only text tool and laser are allowed to function. For viewer: only laser.
+    // If a restricted tool is somehow requested, silently redirect to select/pan.
+    if (isRestricted) {
+      const allowedTools = isCommentorRole ? ['select', 'text', 'laser'] : ['select', 'laser']
+      if (!allowedTools.includes(tool)) {
+        // Queue state update to revert to a safe tool
+        setTimeout(() => setTool('select'), 0)
+        return
+      }
+    }
+
     switch (tool) {
       case 'select':
-        canvas.selection = true
-        canvas.forEachObject(enableAll)
-        canvas.hoverCursor = 'move'
-        canvas.moveCursor = 'move'
+        canvas.selection = isRestricted ? false : true
+        if (!isRestricted) {
+          canvas.forEachObject(enableAll)
+        } else if (isCommentorRole) {
+          // Commentors can interact with their own text objects
+          canvas.forEachObject(o => {
+            const isOwnText = (o.type === 'textbox' || o.type === 'i-text') && o.createdBy === userRef.current?.email
+            if (isOwnText) { o.selectable = true; o.evented = true }
+            else { o.selectable = false; o.evented = false }
+          })
+        } else {
+          canvas.forEachObject(disableAll)
+        }
+        canvas.hoverCursor = isRestricted ? 'default' : 'move'
+        canvas.moveCursor = isRestricted ? 'default' : 'move'
         setCursorAll('default')
         break
       case 'pan':
@@ -3595,6 +3805,11 @@ const Whiteboard = ({
         break
       }
       case 'laser':
+        canvas.isDrawingMode = false
+        canvas.selection = false
+        canvas.forEachObject(disableAll)
+        setCursorAll('none')
+        break
       case 'frame':
         canvas.isDrawingMode = false
         canvas.selection = false
@@ -3621,7 +3836,7 @@ const Whiteboard = ({
     }
 
     canvas.renderAll()
-  }, [tool, color, strokeWidth, canvasBackground])
+  }, [tool, color, strokeWidth, canvasBackground, userRole])
 
   useEffect(() => {
     const canvas = fabricRef.current
@@ -3746,6 +3961,7 @@ const Whiteboard = ({
             fontFamily: "'DM Sans',sans-serif",
             selectable: true, evented: true,
             padding: 10, editable: true, splitByGrapheme: false,
+            createdBy: userRef.current?.email,
           })
           t.isPlaceholder = true
           t.placeholderText = PLACEHOLDER
@@ -4101,7 +4317,9 @@ const Whiteboard = ({
       />
       <LaserPointer active={tool === 'laser'} containerRef={containerRef} />
       <PresenceIndicators containerRef={containerRef} fabricRef={fabricRef} />
-      <ShapeProperties canvas={fabricRef.current} selectedObject={selectedObject} />
+      {userRole !== 'viewer' && userRole !== 'commentor' && (
+        <ShapeProperties canvas={fabricRef.current} selectedObject={selectedObject} />
+      )}
 
       {showTextBar && (
         <TextFormatBar

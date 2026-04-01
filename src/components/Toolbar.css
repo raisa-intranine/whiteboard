@@ -481,3 +481,53 @@
 body.preview-mode .toolbar {
   display: none !important;
 }
+
+/*  Role Badge  */
+.role-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--tb-radius-pill);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--tb-font);
+  white-space: nowrap;
+  flex-shrink: 0;
+  letter-spacing: 0.2px;
+  cursor: default;
+  border: 1.5px solid;
+  transition: opacity var(--tb-duration) var(--tb-ease);
+  position: relative;
+}
+
+.role-badge[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  background: #111; color: #fff;
+  font-size: 11px; font-weight: 500;
+  white-space: nowrap;
+  padding: 5px 9px;
+  border-radius: var(--tb-radius-pill);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms var(--tb-ease), transform 120ms var(--tb-ease);
+  transform: translateY(4px);
+  z-index: 9999;
+  box-shadow: var(--tb-shadow-md);
+}
+.role-badge[data-tooltip]:hover::after { opacity: 1; transform: translateY(0); }
+
+.role-badge--owner    { background: #fff8e1; color: #b45309; border-color: #fde68a; }
+.role-badge--editor   { background: #e8f0fe; color: #1a73e8; border-color: #bfdbfe; }
+.role-badge--commentor{ background: #f3e8ff; color: #7c3aed; border-color: #ddd6fe; }
+.role-badge--viewer   { background: #f1f5f9; color: #475569; border-color: #cbd5e1; }
+
+.toolbar.dark .role-badge--owner    { background: #422006; color: #fbbf24; border-color: #92400e; }
+.toolbar.dark .role-badge--editor   { background: #1a2e48; color: #7baaf7; border-color: #1e3a5f; }
+.toolbar.dark .role-badge--commentor{ background: #2e1065; color: #c084fc; border-color: #4c1d95; }
+.toolbar.dark .role-badge--viewer   { background: #1e293b; color: #94a3b8; border-color: #334155; }
+
