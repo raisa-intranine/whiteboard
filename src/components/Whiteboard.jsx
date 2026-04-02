@@ -4,7 +4,7 @@ import ShapeProperties from './ShapeProperties'
 import LaserPointer from './Laserpointer'
 import PresenceIndicators from './PresenceIndicators'
 import './Whiteboard.css'
-import { getBoard, updateBoard, getSession, getSessions, updateSession, subscribeToBoard, subscribeToSession, updatePresence as firestoreUpdatePresence, subscribeToPresence, removePresence, createBoard, createSession as firestoreCreateSession, saveUserHistorySnapshot, getUserHistory, updateUserHistoryIndex, clearUserHistory, clearAllSessionHistory, deleteUserHistorySnapshots, listenUserRole } from '../services/firestore'
+import { getBoard, updateBoard, getSession, getSessions, updateSession, subscribeToBoard, subscribeToSession, updatePresence as firestoreUpdatePresence, subscribeToPresence, removePresence, createBoard, createSession as firestoreCreateSession, saveUserHistorySnapshot, getUserHistory, updateUserHistoryIndex, clearUserHistory, clearAllSessionHistory, deleteUserHistorySnapshots, listenUserRole, getAllSessionHistory } from '../services/firestore'
 
 // Import realtime service to sync state
 import * as realtimeService from '../services/realtime-firestore'
@@ -1445,7 +1445,14 @@ const Whiteboard = ({
                 o.set({ selectable: false, evented: false, hasControls: false, hasBorders: false })
               }
             })
-            currentCanvas.discardActiveObject()
+            
+            // Only discard if the currently active object is NOT owned by commentor
+            const activeObj = currentCanvas.getActiveObject()
+            if (activeObj) {
+              const isOwnText = (activeObj.type === 'textbox' || activeObj.type === 'i-text') && activeObj.createdBy === userRef.current?.email
+              if (!isOwnText) currentCanvas.discardActiveObject()
+            }
+            
             currentCanvas.requestRenderAll()
           }
         })
@@ -2481,7 +2488,13 @@ const Whiteboard = ({
             o.set({ selectable: false, evented: false, hasControls: false, hasBorders: false })
           }
         })
-        canvas.discardActiveObject()
+        
+        const activeObj = canvas.getActiveObject()
+        if (activeObj) {
+          const isOwnText = (activeObj.type === 'textbox' || activeObj.type === 'i-text') && activeObj.createdBy === userRef.current?.email
+          if (!isOwnText) canvas.discardActiveObject()
+        }
+        
         canvas.requestRenderAll()
       }
 
@@ -2570,8 +2583,13 @@ const Whiteboard = ({
           canvas.isDrawingMode = false
           canvas.defaultCursor = 'default'
           canvas.hoverCursor = 'default'
-          // Don't lock individual objects — commentor needs to interact via text tool
-          canvas.discardActiveObject()
+          
+          const activeObj = canvas.getActiveObject()
+          if (activeObj) {
+            const isOwnText = (activeObj.type === 'textbox' || activeObj.type === 'i-text') && activeObj.createdBy === userRef.current?.email
+            if (!isOwnText) canvas.discardActiveObject()
+          }
+          
           canvas.requestRenderAll()
         }
         // ─────────────────────────────────────────────────────────────────
@@ -3431,10 +3449,9 @@ const Whiteboard = ({
     if (!canvas) return
     
     // Fast-forward to the end (current state)
-    const targetSnapshot = historyRef.current[historyIdxRef.current]
-    if (targetSnapshot) {
-      const json = targetSnapshot.canvasJson || targetSnapshot
-      loadJsonIntoCanvas(canvas, json, isMutingRef, () => {
+    const originalCanvas = state.originalLiveCanvas
+    if (originalCanvas) {
+      loadJsonIntoCanvas(canvas, originalCanvas, isMutingRef, () => {
         canvas.getObjects().forEach(o => {
           if (!o.isEraserStroke && !o.isFrame) {
             o.selectable = true
@@ -3450,12 +3467,19 @@ const Whiteboard = ({
     }
   }, [applyAnimation])
 
-  const handlePreview = useCallback(() => {
+  const handlePreview = useCallback(async () => {
     const canvas = fabricRef.current
-    if (!canvas || historyRef.current.length === 0) return
+    if (!canvas) return
+    const boardId = resolveBoardId()
+    const sessionId = currentSessionIdRef.current
+    if (!boardId || !sessionId) return
 
-    const snapshots = historyRef.current.slice(0, historyIdxRef.current + 1)
-    if (snapshots.length === 0) return
+    // Fetch all snapshots for this session across all users
+    const allHistory = await getAllSessionHistory(boardId, sessionId)
+    if (!allHistory || allHistory.length === 0) return
+
+    // Store the current live canvas so we can restore it when preview stops
+    const currentLiveCanvas = getSerializedCanvas(canvas)
 
     isMutingRef.current = true
     realtimeIgnoreRef.current = true
@@ -3463,7 +3487,14 @@ const Whiteboard = ({
 
     document.body.classList.add('preview-mode')
     setPreviewMode({ active: true, paused: false })
-    previewStateRef.current = { active: true, paused: false, currentIndex: 0, timerId: null, snapshots }
+    previewStateRef.current = { 
+      active: true, 
+      paused: false, 
+      currentIndex: 0, 
+      timerId: null, 
+      snapshots: allHistory,
+      originalLiveCanvas: currentLiveCanvas 
+    }
 
     // Set initial preview state
     canvas.getObjects().slice().forEach(obj => {
@@ -3761,8 +3792,11 @@ const Whiteboard = ({
           // Commentors can interact with their own text objects
           canvas.forEachObject(o => {
             const isOwnText = (o.type === 'textbox' || o.type === 'i-text') && o.createdBy === userRef.current?.email
-            if (isOwnText) { o.selectable = true; o.evented = true }
-            else { o.selectable = false; o.evented = false }
+            if (isOwnText) { 
+              o.set({ selectable: true, evented: true, hasControls: true, hasBorders: true }) 
+            } else { 
+              o.set({ selectable: false, evented: false, hasControls: false, hasBorders: false }) 
+            }
           })
         } else {
           canvas.forEachObject(disableAll)

@@ -336,19 +336,19 @@ const Toolbar = ({
             </button>
 
             <div className="toolbar-sep" />
-
-            <button
-              className={`tool-btn preview-btn`}
-              onClick={() => window.__wbPreview?.()}
-              data-tooltip="Preview Video"
-            >
-              {IC.preview}
-              <span className="preview-label">Preview</span>
-            </button>
-
-            <div className="toolbar-sep" />
           </>
         )}
+
+        <button
+          className={`tool-btn preview-btn`}
+          onClick={() => window.__wbPreview?.()}
+          data-tooltip="Preview Video"
+        >
+          {IC.preview}
+          <span className="preview-label">Preview</span>
+        </button>
+
+        <div className="toolbar-sep" />
 
         <button
           className={`tool-btn laser-btn ${tool==='laser'?'active laser-on':''}`}

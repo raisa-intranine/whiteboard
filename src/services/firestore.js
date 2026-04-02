@@ -472,6 +472,37 @@ export const getUserHistory = async (boardId, sessionId, userEmail) => {
 }
 
 /**
+ * Get all user history for a session across all users (for preview mode)
+ */
+export const getAllSessionHistory = async (boardId, sessionId) => {
+  const historyRef = collection(db, 'boards', boardId, 'sessions', sessionId, 'userHistory')
+  
+  // Use a simple query and sort in memory since composite index might not exist
+  const simpleQuery = query(
+    historyRef,
+    limit(500)
+  )
+  
+  const historySnap = await getDocs(simpleQuery)
+  
+  const snapshots = historySnap.docs.map(doc => {
+    const data = doc.data()
+    return {
+      id: doc.id,
+      canvasJson: typeof data.canvasJson === 'string' ? JSON.parse(data.canvasJson) : data.canvasJson,
+      timestamp: data.timestamp,
+      objectIds: data.objectIds || [],
+      userEmail: data.userEmail
+    }
+  })
+  
+  // Sort by timestamp in memory
+  snapshots.sort((a, b) => a.timestamp - b.timestamp)
+  
+  return snapshots
+}
+
+/**
  * Delete specific history snapshots by their IDs
  */
 export const deleteUserHistorySnapshots = async (boardId, sessionId, snapshotIds) => {
