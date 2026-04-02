@@ -1140,7 +1140,8 @@ const Whiteboard = ({
     if (lastState.isEditing !== newState.isEditing) {
       console.log('[Whiteboard] Presence state changed:', lastState.isEditing, '→', newState.isEditing)
       lastPresenceStateRef.current = newState
-      updatePresenceIfChanged({
+      // Call the actual updatePresence service (not self-recursive)
+      updatePresence({
         name: newState.name,
         email: newState.email,
         isEditing: newState.isEditing
@@ -1481,13 +1482,14 @@ const Whiteboard = ({
         if (!isActive) return
         console.log('[Whiteboard] Successfully entered presence')
 
-        // Heartbeat: keep lastSeen fresh so viewers don't get filtered out as stale
+        // Heartbeat: keep lastSeen fresh so users don't get filtered out as stale
         const heartbeatInterval = setInterval(() => {
           if (!isActive) return
-          updatePresenceIfChanged({
+          // Always call updatePresence directly to refresh lastSeen regardless of editing state
+          updatePresence({
             name: user.name,
             email: user.email,
-            isEditing: false
+            isEditing: lastPresenceStateRef.current.isEditing || false
           })
         }, 60000) // every 60 seconds (optimized to reduce Firestore writes)
         window._presenceHeartbeat = heartbeatInterval
